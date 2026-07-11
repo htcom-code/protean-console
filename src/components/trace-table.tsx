@@ -83,8 +83,9 @@ export function TraceTable({ traces }: { traces: RequestTrace[] }) {
               aria-pressed={chip === key}
               onClick={() => setChip(key)}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11.5px] text-muted-foreground transition-colors hover:text-foreground',
-                chip === key && key === 'errors' && 'border-crit bg-crit text-white hover:text-white',
+                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11.5px] text-muted-foreground transition-colors',
+                chip !== key && 'hover:text-foreground',
+                chip === key && key === 'errors' && 'border-crit bg-crit text-white',
                 chip === key && key !== 'errors' && 'border-foreground bg-foreground text-background',
               )}
             >
