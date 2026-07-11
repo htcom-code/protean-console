@@ -1,0 +1,66 @@
+# GitHub Actions CI — the same local gate contributors run (CONTRIBUTING.md):
+# lint then build. `build` runs only after `lint` passes. This is a client-only
+# SPA, so there is no publish step. Runs on PRs and pushes to main, and only when
+# source/build files change (doc-only changes are skipped).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - ".oxlintrc.json"
+      - "components.json"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - "vite.config.ts"
+      - ".oxlintrc.json"
+      - "components.json"
+      - ".github/workflows/ci.yml"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: install
+        run: npm ci
+      - name: lint
+        run: npm run lint
+
+  # build proves the type-check + production bundle assemble; gated on lint.
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: install
+        run: npm ci
+      - name: build
+        run: npm run build

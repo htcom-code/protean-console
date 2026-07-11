@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # npm dependencies (React, Vite, Tailwind, shadcn/base-ui, oxlint, types).
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # GitHub Actions used in .github/workflows/.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
