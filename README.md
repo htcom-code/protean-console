@@ -8,6 +8,7 @@
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38BDF8?logo=tailwindcss&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A520.19-339933?logo=node.js&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-internal_MVP-b58900)
 
 A single-page app that consumes the control-plane REST of any Protean-enabled
@@ -75,8 +76,10 @@ The dashboard is a single scrollable view: top bar → KPI row → latency chart
 status mix → module metrics table → recent traces table. On first load (or while a
 fetch is in flight) it renders skeletons rather than an empty screen.
 
-> _Add a screenshot/GIF here once the UI is stable (`docs/` asset or an inline
-> image)._
+![Protean Console dashboard — KPI row, p95 latency chart, status mix, module metrics and recent traces tables](docs/protean-console.png)
+
+_Shown with **SAMPLE DATA** (no live platform); the top-bar badge flips to **LIVE**
+when a Protean app is reachable._
 
 ## Quick Start
 
@@ -229,5 +232,4 @@ credential to its outbound requests, at a **single choke point** (`getJson` in
 
 ## License
 
-Internal / proprietary — private repository. License not yet decided; revisit
-before any public release.
+[MIT](LICENSE) © 2026 htcom-code.
