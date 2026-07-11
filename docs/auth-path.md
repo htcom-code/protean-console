@@ -1,59 +1,59 @@
-# Auth path (design)
+# 인증 경로 (설계)
 
-Status: **design only — not implemented.** This records how the console will send
-credentials to a secured platform, and the single place to wire it, so implementation
-is a small, localized change when a target auth scheme is chosen.
+상태: **설계 전용 — 미구현.** 콘솔이 보안이 적용된 플랫폼에 자격 증명을 어떻게
+전달할지, 그리고 그걸 배선하는 단일 지점을 기록한다. 목표 인증 스킴이 정해지면
+구현은 작고 국소적인 변경으로 끝나도록 하기 위함이다.
 
-## Context
+## 배경
 
-Protean does not impose REST auth on `/platform/**` by default — it delegates to the
-consuming app (typically Spring Security). So the console's job is only to **attach a
-credential** to its outbound requests, in a scheme the target platform accepts.
+Protean 은 기본적으로 `/platform/**` 에 REST 인증을 강제하지 않는다 — 소비하는 앱
+(대개 Spring Security)에 위임한다. 따라서 콘솔이 할 일은 **나가는 요청에 자격 증명을
+붙이는 것**뿐이며, 대상 플랫폼이 받아들이는 스킴으로 붙인다.
 
-## The single choke point
+## 단일 병목 지점(choke point)
 
-Every control-plane request goes through **one** function: `getJson` in
-`src/lib/api.ts` (used by `loadSnapshot` for `/traces`, `/traces/metrics`, `/modules`).
-Auth is added there and nowhere else.
+모든 컨트롤플레인 요청은 **하나의** 함수를 거친다: `src/lib/api.ts` 의 `getJson`
+(`loadSnapshot` 이 `/traces`, `/traces/metrics`, `/modules` 에 사용). 인증은 오직
+여기에만 추가하고 다른 곳에는 넣지 않는다.
 
 ```
 loadSnapshot ──▶ getJson(path) ──▶ fetch(`/platform${path}`, { headers })
                                         ▲
-                                        └── inject auth headers here
+                                        └── 여기서 인증 헤더 주입
 ```
 
-## Design
+## 설계
 
-Introduce an **auth-header provider** — a function `() => Record<string,string>` — that
-`getJson` merges into the request headers. Swapping the provider is the only change
-needed to support a different scheme:
+**인증 헤더 프로바이더** — `() => Record<string,string>` 함수 — 를 도입하고,
+`getJson` 이 이를 요청 헤더에 병합한다. 다른 스킴을 지원하려면 프로바이더만
+교체하면 된다:
 
-| Scheme | Provider returns | Extra work |
+| 스킴 | 프로바이더 반환값 | 추가 작업 |
 |---|---|---|
-| Bearer token | `{ Authorization: \`Bearer ${token}\` }` | token source (below) |
-| Custom API key | `{ [headerName]: key }` | configurable header name |
-| OAuth2 | `{ Authorization: \`Bearer ${accessToken}\` }` | **login/redirect + token refresh flow** (largest) |
+| Bearer 토큰 | `{ Authorization: \`Bearer ${token}\` }` | 토큰 소스(아래) |
+| 커스텀 API 키 | `{ [headerName]: key }` | 설정 가능한 헤더 이름 |
+| OAuth2 | `{ Authorization: \`Bearer ${accessToken}\` }` | **로그인/리다이렉트 + 토큰 갱신 흐름**(가장 큼) |
 
-**Token source (for Bearer / API key):**
-- Runtime: read from `localStorage` (set via a small token field in the top bar). This
-  keeps secrets out of the build.
-- Dev convenience: fall back to `import.meta.env.VITE_PROTEAN_TOKEN` (see `.env.example`).
-- **Empty → send no auth header**, so the console still works against an unsecured
-  platform (same as today).
+**토큰 소스 (Bearer / API 키용):**
+- 런타임: `localStorage` 에서 읽는다(상단 바의 작은 토큰 입력 필드로 설정). 이렇게
+  하면 시크릿이 빌드에 포함되지 않는다.
+- 개발 편의: `import.meta.env.VITE_PROTEAN_TOKEN` 으로 폴백(`.env.example` 참고).
+- **비어 있으면 → 인증 헤더를 보내지 않는다.** 그래서 보안이 없는 플랫폼에서도
+  콘솔이 그대로 동작한다(현재와 동일).
 
-**Dev proxy:** the Vite `/platform` proxy forwards request headers as-is, so the auth
-header reaches the target with no proxy change.
+**개발 프록시:** Vite `/platform` 프록시는 요청 헤더를 그대로 전달하므로, 인증
+헤더가 프록시 변경 없이 대상에 도달한다.
 
-## Security rules
+## 보안 규칙
 
-- Never bake a token into the build — runtime (`localStorage`) or gitignored `.env` only.
-- On a 401/403, surface a clear "authentication required / token rejected" state in the
-  top bar (reuse the LIVE/SAMPLE badge area) rather than silently falling back to mock.
-- OAuth2, if chosen, adds a redirect/callback route and token storage/refresh — treat as
-  its own task, not a header swap.
+- 토큰을 절대 빌드에 굽지 않는다 — 런타임(`localStorage`) 또는 gitignore 된 `.env` 만 사용.
+- 401/403 이 오면 조용히 목 데이터로 폴백하지 말고, 상단 바에 "인증 필요 / 토큰 거부됨"
+  상태를 명확히 표시한다(LIVE/SAMPLE 배지 영역 재사용).
+- OAuth2 를 택하면 리다이렉트/콜백 라우트와 토큰 저장·갱신이 추가된다 — 헤더 교체가
+  아니라 별도 작업으로 다룬다.
 
-## Not decided
+## 미결정
 
-Which scheme to support (Bearer / API key / OAuth2) is still open. This note is
-scheme-agnostic up to the provider; pick the scheme, implement the provider + token
-source, and add the 401/403 surface.
+어떤 스킴을 지원할지(Bearer / API 키 / OAuth2)는 아직 열려 있다. 이 노트는
+프로바이더 지점까지 스킴에 무관하다. 스킴을 정하고, 프로바이더 + 토큰 소스를
+구현하고, 401/403 표시를 추가하면 된다.
