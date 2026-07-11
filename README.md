@@ -232,4 +232,4 @@ credential to its outbound requests, at a **single choke point** (`getJson` in
 
 ## License
 
-[MIT](LICENSE) © 2026 htcom-code.
+[MIT](LICENSE) © 2026 htjulia.
