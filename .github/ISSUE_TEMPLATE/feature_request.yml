@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a console capability — a new view, filter, chart, column, or interaction over the platform trace surface.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Protean Console** is a thin, read-only view over the platform's
+        control-plane REST. New data that the console cannot currently show usually
+        needs the **backend (Protean platform)** to expose it first — this repo can
+        only render what `/platform/*` returns. Please check whether your idea is a
+        rendering/UX change here, or a new field/endpoint that belongs upstream.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to observe or do, and what's missing or awkward in the console today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: The view, filter, column, chart, or interaction you'd like. A rough sketch or where it sits in the layout helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried (existing filters, reading raw REST, logs) or other designs you weighed.
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This is a console rendering/UX change, or I've noted that it needs a new backend field/endpoint from the Protean platform first.
+          required: true
+        - label: It fits the design conventions (status color always paired with an icon/label; charts single-hue, no red/green categorical).
+          required: false

@@ -1,0 +1,87 @@
+name: Bug report
+description: The console misbehaves — wrong data, crash, blank screen, polling / live-fallback / filter / chart / theme fault.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Protean Console** is a read-only, client-only SPA
+        that renders request traces and per-module metrics from a Protean-enabled
+        Spring app's control-plane REST (`/platform/traces`,
+        `/platform/traces/metrics`, `/platform/modules`).
+
+        - File here for the **console UI/data layer**: rendering, the LIVE vs
+          SAMPLE-DATA fallback, polling/refresh, time-range or filter behaviour,
+          the latency chart / status mix / tables, theme, or a build/type error.
+        - **Not a console bug:** wrong numbers that are actually correct in the
+          platform, or an endpoint returning an error/4xx-5xx, is a **backend
+          (Protean platform)** issue — verify the raw REST response first.
+        - **Security issues:** do **not** file here — see
+          [SECURITY.md](https://github.com/htcom-code/protean-console/blob/main/SECURITY.md).
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did in the console (range selected, filter, live vs sample), and — if live — the raw `/platform/*` response that produced the wrong render.
+      placeholder: |
+        1. npm run dev against VITE_PROTEAN_TARGET=...
+        2. Select the 1h range, toggle "Errors only"
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected the console to render/do.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead — wrong values, blank screen, console errors, network failures. Paste browser console / network output verbatim.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Console version / commit
+      description: Release tag or commit SHA of protean-console.
+      placeholder: "abc1234 (main)"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Browser / OS (and Node for build issues)
+      description: Browser + version, OS/arch. For build/type errors, include the Node version.
+      placeholder: "Chrome 141, macOS arm64 (Node 22 for build)"
+    validations:
+      required: false
+  - type: dropdown
+    id: source
+    attributes:
+      label: Data source
+      description: Was the top-bar badge LIVE or SAMPLE DATA when the bug occurred?
+      options:
+        - LIVE (real platform)
+        - SAMPLE DATA (mock fallback)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: Relevant setup — `VITE_PROTEAN_TARGET`, dev vs `vite preview`/build, and (if live) which platform build/commit you pointed at.
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, HAR/network logs, or other context.
+    validations:
+      required: false
