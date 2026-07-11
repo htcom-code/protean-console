@@ -1,7 +1,7 @@
-import { mockLatencySeries, mockMetrics, mockModules, mockTraces } from './mock'
 import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, TraceQuery } from './types'
 
 const BASE = '/platform'
+const TIMEOUT_MS = 8000
 
 function qs(params: TraceQuery): string {
   const p = new URLSearchParams()
@@ -16,44 +16,63 @@ function qs(params: TraceQuery): string {
   return s ? `?${s}` : ''
 }
 
-export interface Snapshot {
+export interface LiveData {
   traces: RequestTrace[]
   metrics: ModuleMetricsSnapshot[]
   modules: ModuleStatus[] // joined into the module table for isolation mode / trust tier
   latencyP95: number[]
-  live: boolean // true = data came from a real platform, false = mock fallback
 }
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+/** Why a fetch cycle failed — drives how the UI signals the outage. */
+export type ConnReason = 'unreachable' | 'auth' | 'server'
+
+export type FetchResult =
+  | { ok: true; data: LiveData }
+  | { ok: false; reason: ConnReason; status?: number }
+
+class HttpError extends Error {
+  status: number
+  constructor(status: number, path: string) {
+    super(`${path} → HTTP ${status}`)
+    this.status = status
+  }
+}
+
+async function getJson<T>(path: string, signal: AbortSignal): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     signal,
     headers: { Accept: 'application/json' },
   })
-  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`)
+  if (!res.ok) throw new HttpError(res.status, path)
   return (await res.json()) as T
 }
 
 /**
- * Loads the whole console snapshot from a live Protean platform. When the platform
- * is unreachable (no dev target running) it falls back to grounded mock data so the
- * UI is still explorable — the returned {@link Snapshot.live} flag says which.
+ * One control-plane fetch cycle against a live Protean platform. Never throws:
+ * on failure it classifies the cause — `unreachable` (network/CORS/timeout),
+ * `auth` (401/403), or `server` (other non-2xx) — so the caller can signal the
+ * outage accurately instead of masking it. A timeout aborts a hung request so
+ * polling can't stall. The mock fallback lives in the caller, not here — this
+ * function only ever reports the real platform's state.
  */
-export async function loadSnapshot(query: TraceQuery, now: number): Promise<Snapshot> {
+export async function fetchSnapshot(query: TraceQuery): Promise<FetchResult> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
   try {
     const [traces, metrics, modules] = await Promise.all([
-      getJson<RequestTrace[]>(`/traces${qs(query)}`),
-      getJson<ModuleMetricsSnapshot[]>(`/traces/metrics`),
-      getJson<ModuleStatus[]>(`/modules`),
+      getJson<RequestTrace[]>(`/traces${qs(query)}`, ctrl.signal),
+      getJson<ModuleMetricsSnapshot[]>(`/traces/metrics`, ctrl.signal),
+      getJson<ModuleStatus[]>(`/modules`, ctrl.signal),
     ])
-    return { traces, metrics, modules, latencyP95: deriveP95(traces), live: true }
-  } catch {
-    return {
-      traces: mockTraces(now),
-      metrics: mockMetrics(now),
-      modules: mockModules(),
-      latencyP95: mockLatencySeries(),
-      live: false,
+    return { ok: true, data: { traces, metrics, modules, latencyP95: deriveP95(traces) } }
+  } catch (e) {
+    if (e instanceof HttpError) {
+      if (e.status === 401 || e.status === 403) return { ok: false, reason: 'auth', status: e.status }
+      return { ok: false, reason: 'server', status: e.status }
     }
+    return { ok: false, reason: 'unreachable' } // network error, CORS, or timeout/abort
+  } finally {
+    clearTimeout(timer)
   }
 }
 
