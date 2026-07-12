@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Protean · Trace Console</title>
+    <script>
+      // Apply the persisted theme before first paint so a dark-mode user never
+      // sees a flash of light (FOUC). Mirrors the `pc:theme` key used by useTheme.
+      try {
+        var t = localStorage.getItem('pc:theme')
+        var dark = t ? JSON.parse(t) === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+        if (dark) document.documentElement.classList.add('dark')
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
