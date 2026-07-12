@@ -1,5 +1,6 @@
-import { Activity, Moon, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
+import { Moon, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
 import type { ComponentType } from 'react'
+import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
@@ -63,15 +64,7 @@ export function TopBar({
   const s = statusView(conn)
   return (
     <header className="flex flex-wrap items-center gap-3.5">
-      <div className="flex items-center gap-3">
-        <span className="grid size-9 place-items-center rounded-[10px] bg-gradient-to-br from-[var(--telemetry)] to-primary text-primary-foreground shadow-sm">
-          <Activity className="size-5" strokeWidth={2.2} aria-hidden />
-        </span>
-        <div>
-          <h1 className="text-[15px] font-semibold leading-tight tracking-tight">Protean · Trace Console</h1>
-          <p className="font-mono text-[11.5px] text-muted-foreground">GET /platform/traces</p>
-        </div>
-      </div>
+      <BrandLockup />
 
       <span
         className={cn(

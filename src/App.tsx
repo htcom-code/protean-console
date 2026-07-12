@@ -4,23 +4,46 @@ import { ConnectionBanner } from '@/components/connection-banner'
 import { KpiRow } from '@/components/kpi-row'
 import { LatencyChart } from '@/components/latency-chart'
 import { StatusMix } from '@/components/status-mix'
-import { ModuleTable } from '@/components/module-table'
+import { ModuleTable, type MetricSort } from '@/components/module-table'
+import { ModuleDetailPanel } from '@/components/module-detail-panel'
 import { TraceTable } from '@/components/trace-table'
+import { LoginScreen } from '@/components/login-screen'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useConsoleData } from '@/hooks/use-console-data'
+import { useTraceStore } from '@/hooks/use-trace-store'
 import { useTheme } from '@/hooks/use-theme'
+import { useAuth } from '@/hooks/use-auth'
+import { usePersistentState } from '@/hooks/use-persistent-state'
 import { cn } from '@/lib/utils'
 import type { TimeRange, TraceQuery } from '@/lib/types'
 
 const RANGE_LIMIT: Record<TimeRange, number> = { '5m': 100, '15m': 200, '1h': 200, '6h': 200 }
+const DEFAULT_SORT: MetricSort = { key: 'count', dir: 'desc' }
 
 export default function App() {
+  const { authenticated, signIn } = useAuth()
   const { theme, toggle } = useTheme()
-  const [range, setRange] = useState<TimeRange>('15m')
+  const [range, setRange] = usePersistentState<TimeRange>('pc:range', '15m')
+  const [sort, setSort] = usePersistentState<MetricSort>('pc:metricsSort', DEFAULT_SORT)
+  const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
   const query = useMemo<TraceQuery>(() => ({ limit: RANGE_LIMIT[range] }), [range])
   const { data, conn } = useConsoleData(query)
   const disconnected = conn.status === 'disconnected'
+
+  // Retain trace history in IndexedDB for a real platform; pass mock through.
+  const persist = conn.status === 'live' || conn.status === 'disconnected'
+  const traceStore = useTraceStore(data?.traces ?? [], persist)
+
+  const selected = useMemo(() => {
+    if (!selectedModuleId || !data) return null
+    return {
+      status: data.modules.find((m) => m.id === selectedModuleId) ?? null,
+      metrics: data.metrics.find((m) => m.moduleId === selectedModuleId) ?? null,
+    }
+  }, [selectedModuleId, data])
+
+  if (!authenticated) return <LoginScreen onSubmit={signIn} />
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 pb-16 pt-6">
@@ -42,17 +65,16 @@ export default function App() {
             <StatusMix traces={data.traces} />
           </div>
 
-          <section className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="text-sm font-semibold">Module metrics</h2>
-              <span className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                GET /platform/traces/metrics · {data.metrics.length} tracked
-              </span>
-            </div>
-            <ModuleTable metrics={data.metrics} modules={data.modules} />
-          </section>
+          <ModuleTable
+            metrics={data.metrics}
+            modules={data.modules}
+            sort={sort}
+            onSort={setSort}
+            selectedId={selectedModuleId}
+            onSelect={setSelectedModuleId}
+          />
 
-          <TraceTable traces={data.traces} />
+          <TraceTable store={traceStore} />
 
           <footer className="font-mono text-[11px] leading-relaxed text-muted-foreground">
             Columns map 1:1 to the platform trace surface — rows are{' '}
@@ -62,6 +84,15 @@ export default function App() {
             correlation id shared with logs and RFC 9457 error bodies — click to copy.
           </footer>
         </div>
+      )}
+
+      {selectedModuleId && selected && (
+        <ModuleDetailPanel
+          moduleId={selectedModuleId}
+          status={selected.status}
+          metrics={selected.metrics}
+          onClose={() => setSelectedModuleId(null)}
+        />
       )}
     </div>
   )

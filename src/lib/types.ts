@@ -37,6 +37,13 @@ export interface ModuleStatus {
   bridgedInterfaces: string[] | null
 }
 
+// Mirrors org.htcom.protean.dynamic.DynamicEndpointRegistrar.RouteInfo
+// (GET /platform/modules/{id}/routes — backend endpoint pending)
+export interface RouteInfo {
+  methods: string[]
+  patterns: string[]
+}
+
 // GET /platform/traces query params (all optional; AND-combined, newest-first)
 export interface TraceQuery {
   limit?: number

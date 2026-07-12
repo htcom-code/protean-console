@@ -1,20 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { MethodChip, StatusPill } from '@/components/status-pill'
 import { cn } from '@/lib/utils'
-import { clock } from '@/lib/format'
-import type { RequestTrace } from '@/lib/types'
+import { clock, num } from '@/lib/format'
+import type { TraceStoreView } from '@/hooks/use-trace-store'
+import type { StoredTrace } from '@/lib/trace-db'
 
 type ChipKey = 'all' | 'errors' | 'slow'
+
+const ROW_H = 41
 
 function LatencyBar({ ms }: { ms: number }) {
   const pct = Math.min(100, (ms / 300) * 100)
@@ -33,14 +30,15 @@ function shortId(id: string | null): string {
   return id ? `${id.slice(0, 8)}…` : '—'
 }
 
-export function TraceTable({ traces }: { traces: RequestTrace[] }) {
+export function TraceTable({ store }: { store: TraceStoreView }) {
+  const { rows: allRows, total, hasMore, loadingOlder, loadOlder } = store
   const [chip, setChip] = useState<ChipKey>('all')
   const [q, setQ] = useState('')
-  const [copied, setCopied] = useState<number | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    return traces.filter((t) => {
+    return allRows.filter((t) => {
       if (chip === 'errors' && !(t.error || t.status >= 400)) return false
       if (chip === 'slow' && t.latencyMs <= 100) return false
       if (needle) {
@@ -49,14 +47,31 @@ export function TraceTable({ traces }: { traces: RequestTrace[] }) {
       }
       return true
     })
-  }, [traces, chip, q])
+  }, [allRows, chip, q])
 
-  async function copy(t: RequestTrace) {
+  const parentRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_H,
+    overscan: 14,
+  })
+  const items = virtualizer.getVirtualItems()
+  const paddingTop = items.length > 0 ? items[0].start : 0
+  const paddingBottom = items.length > 0 ? virtualizer.getTotalSize() - items[items.length - 1].end : 0
+
+  // Infinite scroll: pull the next IDB page when the last rows come into view.
+  const lastIndex = items.length > 0 ? items[items.length - 1].index : 0
+  useEffect(() => {
+    if (hasMore && !loadingOlder && lastIndex >= rows.length - 15) loadOlder()
+  }, [hasMore, loadingOlder, lastIndex, rows.length, loadOlder])
+
+  async function copy(t: StoredTrace) {
     if (!t.traceId) return
     try {
       await navigator.clipboard.writeText(t.traceId)
-      setCopied(t.seq)
-      window.setTimeout(() => setCopied((c) => (c === t.seq ? null : c)), 900)
+      setCopied(t._key)
+      window.setTimeout(() => setCopied((c) => (c === t._key ? null : c)), 900)
     } catch {
       /* clipboard blocked — ignore */
     }
@@ -67,7 +82,7 @@ export function TraceTable({ traces }: { traces: RequestTrace[] }) {
       <div className="flex flex-wrap items-center gap-2.5">
         <h2 className="text-sm font-semibold">Recent traces</h2>
         <span className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-          {rows.length} of {traces.length}
+          {num(rows.length)} shown · {num(total)} retained
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {(
@@ -110,9 +125,9 @@ export function TraceTable({ traces }: { traces: RequestTrace[] }) {
       </div>
 
       <Card className="overflow-hidden py-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
+        <div ref={parentRef} className="max-h-[520px] overflow-auto">
+          <table className="w-full caption-bottom text-sm">
+            <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="bg-muted/50 hover:bg-muted/50">
                 <Th right>seq</Th>
                 <Th>Time</Th>
@@ -125,47 +140,69 @@ export function TraceTable({ traces }: { traces: RequestTrace[] }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((t) => (
-                <TableRow
-                  key={t.seq}
-                  className={cn('text-[13px]', t.error && 'shadow-[inset_3px_0_0_var(--crit)]')}
-                >
-                  <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{t.seq}</TableCell>
-                  <TableCell className="font-mono text-muted-foreground">{clock(t.epochMillis)}</TableCell>
-                  <TableCell>
-                    <MethodChip method={t.method} />
-                  </TableCell>
-                  <TableCell className="font-mono">
-                    <span className="font-medium">{t.uri}</span>
-                    {t.pattern && t.pattern !== t.uri && (
-                      <span className="text-muted-foreground"> → {t.pattern}</span>
-                    )}
-                    {t.error && (
-                      <span className="text-crit"> · {t.error.replace(/^.*\./, '')}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className={cn('font-mono', t.moduleId ? '' : 'text-muted-foreground')}>
-                    {t.moduleId ?? '(platform)'}
-                  </TableCell>
-                  <TableCell>
-                    <StatusPill status={t.status} />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <LatencyBar ms={t.latencyMs} />
-                  </TableCell>
-                  <TableCell
-                    className="cursor-copy font-mono text-muted-foreground hover:text-foreground"
-                    title="click to copy traceId"
-                    onClick={() => copy(t)}
+              {paddingTop > 0 && (
+                <tr>
+                  <td colSpan={8} style={{ height: paddingTop, padding: 0, border: 0 }} />
+                </tr>
+              )}
+              {items.map((vi) => {
+                const t = rows[vi.index]
+                return (
+                  <TableRow
+                    key={t._key}
+                    className={cn('text-[13px]', t.error && 'shadow-[inset_3px_0_0_var(--crit)]')}
                   >
-                    {copied === t.seq ? 'copied ✓' : shortId(t.traceId)}
-                  </TableCell>
-                </TableRow>
-              ))}
+                    <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{t.seq}</TableCell>
+                    <TableCell className="font-mono text-muted-foreground">{clock(t.epochMillis)}</TableCell>
+                    <TableCell>
+                      <MethodChip method={t.method} />
+                    </TableCell>
+                    <TableCell className="font-mono">
+                      <span className="font-medium">{t.uri}</span>
+                      {t.pattern && t.pattern !== t.uri && (
+                        <span className="text-muted-foreground"> → {t.pattern}</span>
+                      )}
+                      {t.error && <span className="text-crit"> · {t.error.replace(/^.*\./, '')}</span>}
+                    </TableCell>
+                    <TableCell className={cn('font-mono', t.moduleId ? '' : 'text-muted-foreground')}>
+                      {t.moduleId ?? '(platform)'}
+                    </TableCell>
+                    <TableCell>
+                      <StatusPill status={t.status} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <LatencyBar ms={t.latencyMs} />
+                    </TableCell>
+                    <TableCell
+                      className="cursor-copy font-mono text-muted-foreground hover:text-foreground"
+                      title="click to copy traceId"
+                      onClick={() => copy(t)}
+                    >
+                      {copied === t._key ? 'copied ✓' : shortId(t.traceId)}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+              {paddingBottom > 0 && (
+                <tr>
+                  <td colSpan={8} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+                </tr>
+              )}
             </TableBody>
-          </Table>
+          </table>
         </div>
       </Card>
+
+      {hasMore && (
+        <button
+          type="button"
+          onClick={loadOlder}
+          disabled={loadingOlder}
+          className="mx-auto rounded-full border px-3 py-1 font-mono text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+        >
+          {loadingOlder ? 'loading…' : 'Load older'}
+        </button>
+      )}
     </div>
   )
 }
