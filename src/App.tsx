@@ -15,22 +15,20 @@ import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/hooks/use-auth'
 import { usePersistentState } from '@/hooks/use-persistent-state'
 import { cn } from '@/lib/utils'
-import type { TimeRange } from '@/lib/types'
 
 const DEFAULT_SORT: MetricSort = { key: 'count', dir: 'desc' }
 
 export default function App() {
   const { authenticated, signIn } = useAuth()
   const { theme, toggle } = useTheme()
-  const [range, setRange] = usePersistentState<TimeRange>('pc:range', '15m')
   const [sort, setSort] = usePersistentState<MetricSort>('pc:metricsSort', DEFAULT_SORT)
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
-  const { data, conn } = useConsoleData()
+  const { data, conn, streaming, setStreaming } = useConsoleData()
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
-  const persist = conn.status === 'live' || conn.status === 'disconnected'
+  const persist = conn.status === 'live' || conn.status === 'disconnected' || conn.status === 'paused'
   const traceStore = useTraceStore(data?.traces ?? [], persist)
 
   const selected = useMemo(() => {
@@ -45,7 +43,13 @@ export default function App() {
 
   return (
     <div className="mx-auto max-w-[1200px] px-6 pb-16 pt-6">
-      <TopBar range={range} onRange={setRange} theme={theme} onToggleTheme={toggle} conn={conn} />
+      <TopBar
+        streaming={streaming}
+        onToggleStream={() => setStreaming((s) => !s)}
+        theme={theme}
+        onToggleTheme={toggle}
+        conn={conn}
+      />
 
       {disconnected && <ConnectionBanner conn={conn} />}
 
@@ -56,7 +60,7 @@ export default function App() {
           className={cn('mt-6 flex flex-col gap-6', disconnected && 'opacity-60 transition-opacity')}
           aria-busy={disconnected}
         >
-          <KpiRow metrics={data.metrics} range={range} />
+          <KpiRow metrics={data.metrics} />
 
           <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.9fr_1fr]">
             <LatencyChart series={data.latencyP95} />

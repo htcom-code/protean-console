@@ -1,13 +1,9 @@
-import { Moon, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
+import { Moon, Pause, Play, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import type { TimeRange } from '@/lib/types'
 import type { ConnState } from '@/hooks/use-console-data'
-
-const RANGES: TimeRange[] = ['5m', '15m', '1h', '6h']
 
 type Tone = 'ok' | 'warn' | 'crit'
 type StatusView = { label: string; tone: Tone; ping: boolean; title: string; Icon?: ComponentType<{ className?: string }> }
@@ -36,6 +32,8 @@ function statusView(conn: ConnState): StatusView {
           Icon: ServerCrash,
         }
       return { label: 'DISCONNECTED', tone: 'crit', ping: false, title: 'platform unreachable — reconnecting', Icon: WifiOff }
+    case 'paused':
+      return { label: 'PAUSED', tone: 'warn', ping: false, title: 'stream disconnected — showing last data', Icon: Pause }
     default:
       return { label: 'CONNECTING…', tone: 'warn', ping: false, title: 'connecting to the platform' }
   }
@@ -49,14 +47,14 @@ const TONE_BADGE: Record<Tone, string> = {
 const TONE_DOT: Record<Tone, string> = { ok: 'bg-ok', warn: 'bg-warn', crit: 'bg-crit' }
 
 export function TopBar({
-  range,
-  onRange,
+  streaming,
+  onToggleStream,
   theme,
   onToggleTheme,
   conn,
 }: {
-  range: TimeRange
-  onRange: (r: TimeRange) => void
+  streaming: boolean
+  onToggleStream: () => void
   theme: 'light' | 'dark'
   onToggleTheme: () => void
   conn: ConnState
@@ -84,15 +82,16 @@ export function TopBar({
       </span>
 
       <div className="ml-auto flex items-center gap-2.5">
-        <Tabs value={range} onValueChange={(v) => onRange(v as TimeRange)}>
-          <TabsList className="h-8">
-            {RANGES.map((r) => (
-              <TabsTrigger key={r} value={r} className="px-2.5 font-mono text-[11.5px]">
-                {r}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 gap-1.5 font-mono text-[11.5px]"
+          onClick={onToggleStream}
+          aria-label={streaming ? 'Disconnect the live stream' : 'Connect the live stream'}
+        >
+          {streaming ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+          {streaming ? 'Disconnect' : 'Connect'}
+        </Button>
         <Button
           variant="outline"
           size="icon"

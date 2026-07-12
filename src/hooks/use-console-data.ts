@@ -30,6 +30,7 @@ export type ConnState =
   | { status: 'sample' }
   | { status: 'live'; lastUpdated: number }
   | { status: 'disconnected'; reason: ConnReason; httpStatus?: number; lastUpdated: number | null }
+  | { status: 'paused'; lastUpdated: number | null } // stream deliberately closed by the user
 
 function mockData(now: number): LiveData {
   return {
@@ -51,6 +52,7 @@ function mockData(now: number): LiveData {
 export function useConsoleData() {
   const [data, setData] = useState<LiveData | null>(null)
   const [conn, setConn] = useState<ConnState>({ status: 'initial' })
+  const [streaming, setStreaming] = useState(true)
 
   const tracesRef = useRef<RequestTrace[]>([])
   const metricsRef = useRef<ModuleMetricsSnapshot[]>([])
@@ -59,6 +61,12 @@ export function useConsoleData() {
   const lastUpdatedRef = useRef<number | null>(null)
 
   useEffect(() => {
+    // Deliberately disconnected — keep the last data frozen on screen.
+    if (!streaming) {
+      setConn({ status: 'paused', lastUpdated: lastUpdatedRef.current })
+      return
+    }
+
     let es: EventSource | null = null
     let sampleTimer: number | undefined
     let disconnectTimer: number | undefined
@@ -156,7 +164,7 @@ export function useConsoleData() {
       window.clearTimeout(disconnectTimer)
       es?.close()
     }
-  }, [])
+  }, [streaming])
 
-  return { data, conn }
+  return { data, conn, streaming, setStreaming }
 }
