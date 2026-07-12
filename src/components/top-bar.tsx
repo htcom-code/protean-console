@@ -2,6 +2,7 @@ import { Moon, Pause, Play, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucid
 import type { ComponentType } from 'react'
 import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { ConnState } from '@/hooks/use-console-data'
 
@@ -81,27 +82,43 @@ export function TopBar({
         {s.label}
       </span>
 
-      <div className="ml-auto flex items-center gap-2.5">
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 gap-1.5 font-mono text-[11.5px]"
-          onClick={onToggleStream}
-          aria-label={streaming ? 'Disconnect the live stream' : 'Connect the live stream'}
-        >
-          {streaming ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
-          {streaming ? 'Disconnect' : 'Connect'}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          className="size-9"
-          onClick={onToggleTheme}
-          aria-label="Toggle light / dark theme"
-        >
-          {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-        </Button>
-      </div>
+      <TooltipProvider delay={300}>
+        <div className="ml-auto flex items-center gap-2.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-9"
+                  onClick={onToggleStream}
+                  aria-label={streaming ? 'Disconnect the live stream' : 'Connect the live stream'}
+                >
+                  {streaming ? <Pause className="size-4" /> : <Play className="size-4" />}
+                </Button>
+              }
+            />
+            <TooltipContent>{streaming ? 'Disconnect the live stream' : 'Connect the live stream'}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-9"
+                  onClick={onToggleTheme}
+                  aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                >
+                  {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                </Button>
+              }
+            />
+            <TooltipContent>{theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}</TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
     </header>
   )
 }
