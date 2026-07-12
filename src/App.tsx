@@ -15,9 +15,8 @@ import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/hooks/use-auth'
 import { usePersistentState } from '@/hooks/use-persistent-state'
 import { cn } from '@/lib/utils'
-import type { TimeRange, TraceQuery } from '@/lib/types'
+import type { TimeRange } from '@/lib/types'
 
-const RANGE_LIMIT: Record<TimeRange, number> = { '5m': 100, '15m': 200, '1h': 200, '6h': 200 }
 const DEFAULT_SORT: MetricSort = { key: 'count', dir: 'desc' }
 
 export default function App() {
@@ -27,8 +26,7 @@ export default function App() {
   const [sort, setSort] = usePersistentState<MetricSort>('pc:metricsSort', DEFAULT_SORT)
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
-  const query = useMemo<TraceQuery>(() => ({ limit: RANGE_LIMIT[range] }), [range])
-  const { data, conn } = useConsoleData(query)
+  const { data, conn } = useConsoleData()
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
