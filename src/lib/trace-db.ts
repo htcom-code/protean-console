@@ -83,6 +83,11 @@ export async function countTraces(): Promise<number> {
   return (await db()).count(STORE)
 }
 
+/** Drop all retained rows. */
+export async function clearTraces(): Promise<void> {
+  await (await db()).clear(STORE)
+}
+
 /** Drop oldest rows beyond `max` (default retention cap). */
 export async function pruneTraces(max = TRACE_RETENTION): Promise<number> {
   const database = await db()

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  clearTraces,
   countTraces,
   getTracePage,
   pruneTraces,
@@ -29,6 +30,7 @@ export interface TraceStoreView {
   hasMore: boolean
   loadingOlder: boolean
   loadOlder: () => void
+  clear: () => void
 }
 
 /**
@@ -109,5 +111,21 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
     })()
   }, [])
 
-  return { rows, total, hasMore, loadingOlder, loadOlder }
+  // Wipe the persisted history and the display window. In live mode the next SSE
+  // batch immediately re-seeds the view (and re-persists), so this clears the
+  // accumulated backlog rather than freezing an empty table.
+  const clear = useCallback(() => {
+    void (async () => {
+      try {
+        await clearTraces()
+      } catch {
+        /* IDB unavailable — still clear the in-memory view */
+      }
+      setRows([])
+      setTotal(0)
+      setHasMore(false)
+    })()
+  }, [])
+
+  return { rows, total, hasMore, loadingOlder, loadOlder, clear }
 }

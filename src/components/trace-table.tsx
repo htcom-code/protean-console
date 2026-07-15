@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { Inbox, SearchX, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { MethodChip, StatusPill } from '@/components/status-pill'
@@ -31,10 +33,28 @@ function shortId(id: string | null): string {
 }
 
 export function TraceTable({ store }: { store: TraceStoreView }) {
-  const { rows: allRows, total, hasMore, loadingOlder, loadOlder } = store
+  const { rows: allRows, total, hasMore, loadingOlder, loadOlder, clear } = store
   const [chip, setChip] = useState<ChipKey>('all')
   const [q, setQ] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const confirmTimer = useRef<number | undefined>(undefined)
+
+  // First click arms; a second click within the window clears. Guards against an
+  // accidental wipe of the retained history.
+  function onClearClick() {
+    if (!confirmClear) {
+      setConfirmClear(true)
+      window.clearTimeout(confirmTimer.current)
+      confirmTimer.current = window.setTimeout(() => setConfirmClear(false), 3000)
+      return
+    }
+    window.clearTimeout(confirmTimer.current)
+    setConfirmClear(false)
+    clear()
+  }
+
+  useEffect(() => () => window.clearTimeout(confirmTimer.current), [])
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -113,6 +133,19 @@ export function TraceTable({ store }: { store: TraceStoreView }) {
               {label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={onClearClick}
+            disabled={total === 0}
+            aria-label={confirmClear ? 'Click again to clear retained trace history' : 'Clear retained trace history'}
+            title={confirmClear ? 'Click again to clear all' : 'Clear retained trace history (IndexedDB)'}
+            className={cn(
+              'inline-flex items-center justify-center rounded-full border p-1.5 transition-colors disabled:opacity-40',
+              confirmClear ? 'border-crit bg-crit text-white' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+          </button>
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -125,8 +158,35 @@ export function TraceTable({ store }: { store: TraceStoreView }) {
       </div>
 
       <Card className="overflow-hidden py-0">
-        <div ref={parentRef} className="max-h-[520px] overflow-auto">
-          <table className="w-full caption-bottom text-sm">
+        {rows.length === 0 ? (
+          allRows.length === 0 ? (
+            <Empty className="min-h-[240px]">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Inbox />
+                </EmptyMedia>
+                <EmptyTitle>No traces yet</EmptyTitle>
+                <EmptyDescription>
+                  Requests appear here as the platform serves them, and are kept across reloads.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <Empty className="min-h-[240px]">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <SearchX />
+                </EmptyMedia>
+                <EmptyTitle>No traces match</EmptyTitle>
+                <EmptyDescription>
+                  Clear the filter or search to see all {num(total)} retained traces.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )
+        ) : (
+          <div ref={parentRef} className="max-h-[520px] overflow-auto">
+            <table className="w-full caption-bottom text-sm">
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="bg-muted/50 hover:bg-muted/50">
                 <Th right>seq</Th>
@@ -189,8 +249,9 @@ export function TraceTable({ store }: { store: TraceStoreView }) {
                 </tr>
               )}
             </TableBody>
-          </table>
-        </div>
+            </table>
+          </div>
+        )}
       </Card>
 
       {hasMore && (
