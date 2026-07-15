@@ -10,8 +10,13 @@ const STREAM_URL = '/platform/traces/stream'
 const TRACE_WINDOW = 500
 // If the stream never opens (no platform reachable), fall back to sample data.
 const SAMPLE_DELAY_MS = 2500
-// Tolerate a brief reconnect blip before flipping a live view to disconnected.
-const DISCONNECT_GRACE_MS = 4000
+// A healthy stream pushes metrics/modules snapshots ~1×/s, so it's never silent
+// for long. If no event arrives within this window the connection is dead — even
+// when EventSource still reports it open (see the watchdog note below).
+const STALE_TIMEOUT_MS = 6000
+// After a dead/stalled stream, wait this long before rebuilding the EventSource.
+// Keep in sync with the "retrying every 5s" copy in ConnectionBanner.
+const RECONNECT_DELAY_MS = 5000
 
 /**
  * Connection state the console renders from:
@@ -19,11 +24,13 @@ const DISCONNECT_GRACE_MS = 4000
  * - `sample`       — no platform reachable (cold start); showing grounded mock data
  * - `live`         — the SSE stream is open and delivering
  * - `disconnected` — the stream dropped after being live; last real data is kept
- *                    and marked stale (EventSource auto-reconnects → back to live)
+ *                    and marked stale. The hook rebuilds the stream on a timer, so
+ *                    it returns to `live` once the platform is reachable again.
  *
  * Note: EventSource can't surface HTTP status on failure, so a dropped stream is
  * always reported as `unreachable` (the auth/server distinction the old polling
- * path made is not available over SSE).
+ * path made is not available over SSE). It also can't be trusted to fire `error`
+ * when the connection dies behind a proxy, so a silence watchdog covers that case.
  */
 export type ConnState =
   | { status: 'initial' }
@@ -69,7 +76,8 @@ export function useConsoleData() {
 
     let es: EventSource | null = null
     let sampleTimer: number | undefined
-    let disconnectTimer: number | undefined
+    let staleTimer: number | undefined
+    let reconnectTimer: number | undefined
     let closed = false
 
     function publish() {
@@ -88,14 +96,6 @@ export function useConsoleData() {
         .slice(0, TRACE_WINDOW)
     }
 
-    function markLive() {
-      everOpenRef.current = true
-      lastUpdatedRef.current = Date.now()
-      window.clearTimeout(sampleTimer)
-      window.clearTimeout(disconnectTimer)
-      setConn({ status: 'live', lastUpdated: lastUpdatedRef.current })
-    }
-
     function parse<T>(e: Event): T | null {
       try {
         return JSON.parse((e as MessageEvent).data) as T
@@ -104,16 +104,96 @@ export function useConsoleData() {
       }
     }
 
-    try {
-      es = new EventSource(STREAM_URL)
-    } catch {
-      setData(mockData(Date.now()))
-      setConn({ status: 'sample' })
-      return
+    // (Re)arm the silence watchdog. A healthy stream pushes metrics/modules
+    // snapshots ~1×/s, so if nothing arrives within STALE_TIMEOUT_MS the connection
+    // is dead — even when EventSource still reports it open. A dev proxy (Vite) can
+    // hold the client socket open after the upstream dies, so 'error' never fires;
+    // the watchdog is then the ONLY signal that we've lost the platform.
+    function armWatchdog() {
+      window.clearTimeout(staleTimer)
+      staleTimer = window.setTimeout(onSilence, STALE_TIMEOUT_MS)
     }
 
-    // Cold-start: if the stream never opens, assume no platform is there and
-    // show the explorable sample demo.
+    function onSilence() {
+      if (closed) return
+      // Only surface "disconnected" once we've actually been live; a cold start
+      // with no platform stays on the sample demo (handled below).
+      if (everOpenRef.current) {
+        setConn({ status: 'disconnected', reason: 'unreachable', lastUpdated: lastUpdatedRef.current })
+      }
+      reconnect()
+    }
+
+    // Tear down the (possibly half-open) stream and rebuild it after a short delay,
+    // so the console recovers on its own when the platform returns — a stalled
+    // EventSource won't reconnect itself once a proxy has wedged it open.
+    function reconnect() {
+      es?.close()
+      window.clearTimeout(reconnectTimer)
+      reconnectTimer = window.setTimeout(() => {
+        if (!closed) open()
+      }, RECONNECT_DELAY_MS)
+    }
+
+    function markLive() {
+      everOpenRef.current = true
+      lastUpdatedRef.current = Date.now()
+      window.clearTimeout(sampleTimer)
+      armWatchdog()
+      setConn({ status: 'live', lastUpdated: lastUpdatedRef.current })
+    }
+
+    function open() {
+      try {
+        es = new EventSource(STREAM_URL)
+      } catch {
+        setData(mockData(Date.now()))
+        setConn({ status: 'sample' })
+        return
+      }
+
+      // Guard a stream that opens but never emits (or a proxy holding a dead socket
+      // open): the watchdog fires if nothing arrives in time.
+      armWatchdog()
+
+      es.addEventListener('open', () => markLive())
+
+      es.addEventListener('trace', (e) => {
+        const batch = parse<RequestTrace[]>(e)
+        if (!batch) return
+        mergeTraces(batch)
+        markLive()
+        publish()
+      })
+      es.addEventListener('metrics', (e) => {
+        const m = parse<ModuleMetricsSnapshot[]>(e)
+        if (!m) return
+        metricsRef.current = m
+        markLive()
+        publish()
+      })
+      es.addEventListener('modules', (e) => {
+        const m = parse<ModuleStatus[]>(e)
+        if (!m) return
+        modulesRef.current = m
+        markLive()
+        publish()
+      })
+
+      es.addEventListener('error', () => {
+        // The browser surfaced a stream error (typically a refused/closed
+        // connection — in dev the proxy turns a dead upstream into this on a fresh
+        // connect). Rebuild promptly. UI state is owned by the watchdog / markLive,
+        // so we don't flip here — a momentary blip that recovers on its own won't
+        // flicker the badge.
+        if (closed) return
+        reconnect()
+      })
+    }
+
+    // Cold-start: if the stream never opens, assume no platform is there and show
+    // the explorable sample demo. `everOpenRef` keeps this from overriding a real
+    // outage once we've been live.
     sampleTimer = window.setTimeout(() => {
       if (!everOpenRef.current && !closed) {
         setData(mockData(Date.now()))
@@ -121,47 +201,13 @@ export function useConsoleData() {
       }
     }, SAMPLE_DELAY_MS)
 
-    es.addEventListener('open', () => markLive())
-
-    es.addEventListener('trace', (e) => {
-      const batch = parse<RequestTrace[]>(e)
-      if (!batch) return
-      mergeTraces(batch)
-      markLive()
-      publish()
-    })
-    es.addEventListener('metrics', (e) => {
-      const m = parse<ModuleMetricsSnapshot[]>(e)
-      if (!m) return
-      metricsRef.current = m
-      markLive()
-      publish()
-    })
-    es.addEventListener('modules', (e) => {
-      const m = parse<ModuleStatus[]>(e)
-      if (!m) return
-      modulesRef.current = m
-      markLive()
-      publish()
-    })
-
-    es.addEventListener('error', () => {
-      // EventSource auto-reconnects. If we were live, tolerate a brief blip, then
-      // surface disconnected while keeping the last data on screen. Cold-start
-      // (never opened) is handled by the sample fallback above.
-      if (!everOpenRef.current || closed) return
-      window.clearTimeout(disconnectTimer)
-      disconnectTimer = window.setTimeout(() => {
-        if (!closed) {
-          setConn({ status: 'disconnected', reason: 'unreachable', lastUpdated: lastUpdatedRef.current })
-        }
-      }, DISCONNECT_GRACE_MS)
-    })
+    open()
 
     return () => {
       closed = true
       window.clearTimeout(sampleTimer)
-      window.clearTimeout(disconnectTimer)
+      window.clearTimeout(staleTimer)
+      window.clearTimeout(reconnectTimer)
       es?.close()
     }
   }, [streaming])
