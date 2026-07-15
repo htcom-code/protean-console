@@ -46,7 +46,7 @@ loadSnapshot ──▶ getJson(path) ──▶ fetch(`/platform${path}`, { heade
 
 ## 보안 규칙
 
-- 토큰을 절대 빌드에 굽지 않는다 — 런타임(`localStorage`) 또는 gitignore 된 `.env` 만 사용.
+- 토큰을 절대 빌드에 넣지 않는다 — 런타임(`localStorage`) 또는 gitignore 된 `.env` 만 사용.
 - 401/403 이 오면 조용히 목 데이터로 폴백하지 말고, 상단 바에 "인증 필요 / 토큰 거부됨"
   상태를 명확히 표시한다(LIVE/SAMPLE 배지 영역 재사용).
 - OAuth2 를 택하면 리다이렉트/콜백 라우트와 토큰 저장·갱신이 추가된다 — 헤더 교체가

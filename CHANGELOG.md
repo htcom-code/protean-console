@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   poll is tolerated before the view flips to disconnected.
 
 ### Fixed
+- The console now notices when the platform goes down mid-stream. Behind a dev
+  proxy an SSE connection can be left half-open when the upstream dies — no
+  `error` event fires — so the view stayed `LIVE` forever. A silence watchdog now
+  flips to `DISCONNECTED` when the stream goes quiet (the platform pushes
+  metrics/modules ~1×/s, so real silence is unambiguous), and the stream is
+  rebuilt on a timer so it recovers to `LIVE` once the platform is back.
 - Selected Recent-traces filter chips (`All` / `Slow`) now keep their label
   readable on hover in both light and dark themes.
 

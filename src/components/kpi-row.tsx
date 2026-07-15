@@ -50,7 +50,7 @@ function Tile({
   )
 }
 
-export function KpiRow({ metrics, range }: { metrics: ModuleMetricsSnapshot[]; range: string }) {
+export function KpiRow({ metrics }: { metrics: ModuleMetricsSnapshot[] }) {
   const total = metrics.reduce((a, m) => a + m.count, 0)
   const errors = metrics.reduce((a, m) => a + m.errorCount, 0)
   const errorRate = total ? errors / total : 0
@@ -60,7 +60,7 @@ export function KpiRow({ metrics, range }: { metrics: ModuleMetricsSnapshot[]; r
 
   return (
     <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-      <Tile label={`Requests · ${range}`} value={num(total)}>
+      <Tile label="Requests · total" value={num(total)}>
         <Delta trend="up-bad">▲ 12% vs prev</Delta>
       </Tile>
       <Tile label="Error rate" value={(errorRate * 100).toFixed(2)} unit="%" valueClass="text-crit">

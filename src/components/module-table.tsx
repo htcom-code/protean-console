@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronsUpDown, Gauge, SearchX } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Card } from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ago, num, pct } from '@/lib/format'
@@ -122,8 +123,39 @@ export function ModuleTable({
       </div>
 
       <Card className="overflow-hidden py-0">
-        <div ref={parentRef} className="max-h-[460px] overflow-auto">
-          <table className="w-full caption-bottom text-sm">
+        {rows.length === 0 ? (
+          metrics.length === 0 ? (
+            <Empty className="min-h-[240px]">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Gauge />
+                </EmptyMedia>
+                <EmptyTitle>No module metrics</EmptyTitle>
+                <EmptyDescription>
+                  Per-module latency and error rates are opt-in. Enable{' '}
+                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">
+                    protean.trace.metrics.enabled=true
+                  </code>{' '}
+                  on the platform and restart; rows appear once modules receive traffic.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <Empty className="min-h-[240px]">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <SearchX />
+                </EmptyMedia>
+                <EmptyTitle>No modules match</EmptyTitle>
+                <EmptyDescription>
+                  Clear the filter or the Errors-only toggle to see all {metrics.length} tracked modules.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )
+        ) : (
+          <div ref={parentRef} className="max-h-[460px] overflow-auto">
+            <table className="w-full caption-bottom text-sm">
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="bg-muted/50 hover:bg-muted/50">
                 <SortTh label="Module" col="moduleId" sort={sort} onSort={toggleSort} />
@@ -172,8 +204,9 @@ export function ModuleTable({
                 </tr>
               )}
             </TableBody>
-          </table>
-        </div>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   )

@@ -102,7 +102,7 @@ export async function getModuleRoutes(id: string): Promise<RoutesResult> {
 }
 
 // Rough p95-per-minute bucketing from raw traces, for the live path.
-function deriveP95(traces: RequestTrace[]): number[] {
+export function deriveP95(traces: RequestTrace[]): number[] {
   const buckets = new Map<number, number[]>()
   for (const t of traces) {
     const min = Math.floor(t.epochMillis / 60000)
