@@ -15,7 +15,7 @@
     "@fontsource-variable/raleway": "^5.2.8",
     "@shadcn/react": "^0.2.1",
     "@tailwindcss/vite": "^4.3.2",
-    "@tanstack/react-virtual": "^3.14.5",
+    "@tanstack/react-virtual": "^3.14.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "idb": "^8.0.3",
