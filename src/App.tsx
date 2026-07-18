@@ -60,7 +60,7 @@ export default function App() {
           className={cn('mt-6 flex flex-col gap-6', disconnected && 'opacity-60 transition-opacity')}
           aria-busy={disconnected}
         >
-          <KpiRow metrics={data.metrics} />
+          <KpiRow metrics={data.metrics} summary={data.summary} />
 
           <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.9fr_1fr]">
             <LatencyChart series={data.latencyP95} />

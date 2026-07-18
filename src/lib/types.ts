@@ -25,6 +25,27 @@ export interface ModuleMetricsSnapshot {
   lastSeenEpochMillis: number
 }
 
+// Mirrors org.htcom.protean.runtime.TraceSummary (SSE `summary` event).
+// Windowed header aggregate the platform ticker computes out-of-band over the
+// last `windowMs`, plus the trend vs the previous same-length window. The three
+// delta fields are null when the previous window had no samples — the console
+// then hides the trend rather than inventing one.
+export interface TraceSummary {
+  windowMs: number
+  count: number
+  errorCount: number
+  errorRate: number
+  p50LatencyMs: number
+  p95LatencyMs: number
+  p99LatencyMs: number
+  maxLatencyMs: number
+  requestsDeltaPct: number | null // (cur-prev)/prev, fraction (0.12 = +12%)
+  errorRateDeltaPp: number | null // (cur-prev)*100, percentage points
+  p95DeltaMs: number | null // cur-prev, ms
+  activeModules: number
+  modulesByMode: Record<string, number> // active modules grouped by isolation mode
+}
+
 // Mirrors org.htcom.protean.web.ModuleStatus (GET /platform/modules)
 export interface ModuleStatus {
   id: string

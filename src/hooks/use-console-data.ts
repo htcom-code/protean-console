@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { deriveP95, type ConnReason, type LiveData } from '@/lib/api'
-import { mockLatencySeries, mockMetrics, mockModules, mockTraces } from '@/lib/mock'
+import { mockLatencySeries, mockMetrics, mockModules, mockSummary, mockTraces } from '@/lib/mock'
 import { traceKey } from '@/lib/trace-db'
-import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace } from '@/lib/types'
+import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, TraceSummary } from '@/lib/types'
 
 const STREAM_URL = '/platform/traces/stream'
 // Rolling window of recent traces kept in memory for the chart / status mix.
@@ -44,6 +44,7 @@ function mockData(now: number): LiveData {
     traces: mockTraces(now),
     metrics: mockMetrics(now),
     modules: mockModules(),
+    summary: mockSummary(),
     latencyP95: mockLatencySeries(),
   }
 }
@@ -64,6 +65,7 @@ export function useConsoleData() {
   const tracesRef = useRef<RequestTrace[]>([])
   const metricsRef = useRef<ModuleMetricsSnapshot[]>([])
   const modulesRef = useRef<ModuleStatus[]>([])
+  const summaryRef = useRef<TraceSummary | null>(null)
   const everOpenRef = useRef(false)
   const lastUpdatedRef = useRef<number | null>(null)
 
@@ -82,7 +84,13 @@ export function useConsoleData() {
 
     function publish() {
       const traces = tracesRef.current
-      setData({ traces, metrics: metricsRef.current, modules: modulesRef.current, latencyP95: deriveP95(traces) })
+      setData({
+        traces,
+        metrics: metricsRef.current,
+        modules: modulesRef.current,
+        summary: summaryRef.current,
+        latencyP95: deriveP95(traces),
+      })
     }
 
     // Merge an incoming trace batch into the rolling window (dedup by key,
@@ -176,6 +184,13 @@ export function useConsoleData() {
         const m = parse<ModuleStatus[]>(e)
         if (!m) return
         modulesRef.current = m
+        markLive()
+        publish()
+      })
+      es.addEventListener('summary', (e) => {
+        const s = parse<TraceSummary>(e)
+        if (!s) return
+        summaryRef.current = s
         markLive()
         publish()
       })
