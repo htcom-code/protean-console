@@ -1,4 +1,4 @@
-import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, RouteInfo, TraceQuery } from './types'
+import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, RouteInfo, TraceQuery, TraceSummary } from './types'
 
 const BASE = '/platform'
 const TIMEOUT_MS = 8000
@@ -20,6 +20,7 @@ export interface LiveData {
   traces: RequestTrace[]
   metrics: ModuleMetricsSnapshot[]
   modules: ModuleStatus[] // joined into the module table for isolation mode / trust tier
+  summary: TraceSummary | null // windowed KPI header aggregate; null until the `summary` event arrives
   latencyP95: number[]
 }
 
@@ -64,7 +65,7 @@ export async function fetchSnapshot(query: TraceQuery): Promise<FetchResult> {
       getJson<ModuleMetricsSnapshot[]>(`/traces/metrics`, ctrl.signal),
       getJson<ModuleStatus[]>(`/modules`, ctrl.signal),
     ])
-    return { ok: true, data: { traces, metrics, modules, latencyP95: deriveP95(traces) } }
+    return { ok: true, data: { traces, metrics, modules, summary: null, latencyP95: deriveP95(traces) } }
   } catch (e) {
     if (e instanceof HttpError) {
       if (e.status === 401 || e.status === 403) return { ok: false, reason: 'auth', status: e.status }

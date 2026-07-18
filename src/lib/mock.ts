@@ -1,4 +1,4 @@
-import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace } from './types'
+import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, TraceSummary } from './types'
 
 // Deterministic PRNG so the demo data is stable across renders/screenshots.
 function makeRng(seed: number) {
@@ -118,6 +118,26 @@ export function mockModules(): ModuleStatus[] {
     mk('mcp-hello', 'in-process', 'gen.HelloController'),
     mk('wk-crash', 'worker', 'gen.BeatController'),
   ]
+}
+
+// Windowed KPI header aggregate, mirroring the platform `summary` SSE event.
+// Trends are populated (not null) so the sample demo shows the fully-wired header.
+export function mockSummary(): TraceSummary {
+  return {
+    windowMs: 60000,
+    count: 512,
+    errorCount: 7,
+    errorRate: 0.0137,
+    p50LatencyMs: 12,
+    p95LatencyMs: 88,
+    p99LatencyMs: 210,
+    maxLatencyMs: 640,
+    requestsDeltaPct: 0.12,
+    errorRateDeltaPp: 0.31,
+    p95DeltaMs: -6,
+    activeModules: 6,
+    modulesByMode: { worker: 3, container: 1, 'in-process': 2 },
+  }
 }
 
 // p95 latency series for the main chart (one point/minute).

@@ -5,6 +5,23 @@ const W = 720
 const H = 190
 const PAD = { t: 14, r: 10, b: 20, l: 30 }
 
+/**
+ * Evenly-spaced round axis ticks spanning [0, max]. A fixed [0,25,50,75] set
+ * collapses to the bottom of the axis whenever an outlier blows up the scale
+ * (and drops all but 0 when the data is tiny); nice ticks keep the labels spread
+ * across the height at any magnitude. Returns [0] when there is no positive data.
+ */
+function niceTicks(max: number, count = 4): number[] {
+  if (!(max > 0)) return [0]
+  const raw = max / count
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
+  const norm = raw / mag
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag
+  const ticks: number[] = []
+  for (let v = 0; v <= max + step / 2; v += step) ticks.push(Math.round(v))
+  return ticks
+}
+
 /** Single-series p95 latency area with a crosshair+tooltip. One hue (telemetry), no legend needed. */
 export function LatencyChart({ series }: { series: number[] }) {
   const gradId = useId()
@@ -13,13 +30,15 @@ export function LatencyChart({ series }: { series: number[] }) {
   const n = series.length
 
   if (n === 0) return null
-  const max = Math.max(...series) * 1.15 || 1
+  // Nice round ticks give the scale; the top tick already clears the data max,
+  // so the axis has headroom without an arbitrary multiplier.
+  const gridVals = niceTicks(Math.max(...series))
+  const max = gridVals[gridVals.length - 1] || 1
   const x = (i: number) => PAD.l + (i / (n - 1)) * (W - PAD.l - PAD.r)
   const y = (v: number) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b)
 
   const pts = series.map((v, i) => `${x(i)},${y(v)}`).join(' ')
   const area = `${PAD.l},${y(0)} ${pts} ${x(n - 1)},${y(0)}`
-  const gridVals = [0, 25, 50, 75].filter((v) => v <= max)
 
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
     const r = svgRef.current!.getBoundingClientRect()
