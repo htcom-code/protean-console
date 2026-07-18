@@ -4,7 +4,7 @@
 > [Protean](#reference) dynamic-module platform.
 
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38BDF8?logo=tailwindcss&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A520.19-339933?logo=node.js&logoColor=white)
@@ -14,7 +14,7 @@
 A single-page app that consumes the control-plane REST of any Protean-enabled
 Spring application and renders its request traces and per-module metrics. It is
 **not coupled to any one backend** and ships nothing server-side — it talks to the
-platform with plain `fetch` through the Vite dev proxy.
+platform over an SSE stream (with a `fetch` fallback) through the Vite dev proxy.
 
 ## Table of Contents
 
@@ -52,21 +52,28 @@ in logs.
 
 ## Features
 
+- **Live SSE stream** — one connection to `/platform/traces/stream` multiplexes
+  `trace` / `metrics` / `modules` / `summary` events pushed ~1×/s, with manual
+  **Connect / Disconnect** control. Replaces the previous 5s REST polling.
 - **Live / sample auto-fallback** — when a platform is reachable, data is `live`;
   when none is running, the console falls back to grounded mock data so the UI is
   always explorable. The top bar shows a **LIVE** vs **SAMPLE DATA** badge.
-- **Polling refresh** — the snapshot re-fetches every 5s, and immediately whenever
-  the query (e.g. time range) changes.
-- **KPI row** — headline counters (request volume, error rate, latency) for the
-  selected window.
-- **p95 latency chart** — single-hue telemetry series, bucketed per minute.
+- **KPI row** — cumulative headline counters (request volume, error rate,
+  latency, active modules), with a recent-window trend sub-line and isolation-mode
+  split from the `summary` event. Trends are hidden (not faked) with no baseline.
+- **p95 latency chart** — single-hue telemetry series, bucketed per minute, with
+  data-driven axis ticks.
 - **Status mix** — distribution of request outcomes at a glance.
 - **Module metrics table** — per-module counters joined with live module status
-  (isolation mode, trust tier) from `/platform/modules`.
+  (isolation mode, trust tier) from `/platform/modules`; a detail drawer per row.
 - **Recent traces table** — columns map 1:1 to `RequestTrace`; click a `traceId`
   to copy it.
-- **Time-range selector** — 5m / 15m / 1h / 6h, each with a sensible row limit.
-- **Light / dark theme** — persisted toggle.
+- **IndexedDB trace history** — traces are retained across the platform ring-buffer
+  eviction and reloads, with infinite-scroll "Load older" and a two-step Clear.
+- **Virtualized tables** — the metrics and trace tables render only visible rows,
+  with persisted header-click sort, search, and errors-only filters.
+- **Login shell** (stub) and persisted UI state (theme / sort), with a first-paint
+  theme script that avoids a dark-mode flash.
 - **Accessible status color** — ok/warn/crit is always paired with an icon/label,
   never color alone; charts stay single-hue (no red/green categorical).
 
@@ -95,8 +102,8 @@ npm run dev
 ```
 
 Open the printed URL (default `http://localhost:5173`). With no platform running
-you'll see **SAMPLE DATA**; start a Protean app on the target host and it switches
-to **LIVE** on the next poll.
+you'll see **SAMPLE DATA**; start a Protean app on the target host and the SSE
+stream switches it to **LIVE** on the next event.
 
 ## Installation
 
@@ -131,22 +138,28 @@ server on the same origin — no CORS setup needed against the platform.
 ```
 src/
 ├── main.tsx                 # entry
-├── App.tsx                  # dashboard layout + query/time-range state
+├── App.tsx                  # dashboard layout + selection/auth state
 ├── components/              # presentational; take plain props
-│   ├── top-bar.tsx          # LIVE/SAMPLE badge, range selector, theme toggle
-│   ├── kpi-row.tsx
+│   ├── top-bar.tsx          # LIVE/SAMPLE badge, connect/disconnect, theme toggle
+│   ├── connection-banner.tsx
+│   ├── kpi-row.tsx          # cumulative values + windowed summary trends
 │   ├── latency-chart.tsx    # single-hue p95 series
 │   ├── status-mix.tsx
-│   ├── module-table.tsx     # metrics ⋈ module status
-│   ├── trace-table.tsx      # RequestTrace rows, click-to-copy traceId
-│   └── status-pill.tsx      # icon + label + status color
+│   ├── module-table.tsx     # metrics ⋈ module status (virtualized)
+│   ├── module-detail-panel.tsx
+│   ├── trace-table.tsx      # RequestTrace rows (virtualized), click-to-copy traceId
+│   └── login-screen.tsx
 ├── hooks/
-│   ├── use-console-data.ts  # loadSnapshot + 5s polling
+│   ├── use-console-data.ts  # SSE stream (EventSource) + connection state
+│   ├── use-trace-store.ts   # IndexedDB trace history + load-older
+│   ├── use-persistent-state.ts
+│   ├── use-auth.ts
 │   └── use-theme.ts
 └── lib/
-    ├── api.ts               # THE ONLY place that knows HTTP (loadSnapshot/getJson)
+    ├── api.ts               # HTTP boundary: REST fallback, module routes, p95 derive
     ├── types.ts             # mirror of the Java records — keep in sync
     ├── mock.ts              # grounded fallback data (live: false)
+    ├── trace-db.ts          # IndexedDB access + trace key
     ├── format.ts            # number/latency formatting (tabular-nums)
     └── utils.ts
 ```
@@ -164,16 +177,19 @@ src/
 
 ## Platform API surface
 
-`loadSnapshot()` fans out three read-only calls in parallel:
+The live path is a single SSE connection to `GET /platform/traces/stream`, which
+multiplexes four named events:
 
-| Endpoint | Maps to | Notes |
+| Event | Maps to | Notes |
 |---|---|---|
-| `GET /platform/traces` | `RequestTrace[]` | Supports query params below. |
-| `GET /platform/traces/metrics` | `ModuleMetricsSnapshot[]` | Opt-in via `protean.trace.metrics.enabled`. |
-| `GET /platform/modules` | `ModuleStatus[]` | Joined into the module table for isolation mode / trust tier. |
+| `trace` | `RequestTrace[]` | Incremental delta since the last seq (initial snapshot on connect). |
+| `metrics` | `ModuleMetricsSnapshot[]` | Full per-module snapshot each tick. Opt-in via `protean.trace.metrics.enabled`. |
+| `modules` | `ModuleStatus[]` | Joined into the module table for isolation mode / trust tier. |
+| `summary` | `TraceSummary` | Windowed KPI aggregate + trend vs the previous window + active-module split by mode. |
 
-Trace query params (sent by `api.ts`): `limit`, `moduleId`, `errorsOnly`,
-`status`, `minLatencyMs`, `since`, `beforeSeq`.
+The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
+`/platform/modules`, `/platform/modules/{id}/routes`) is still mirrored in
+`api.ts` as a fallback and for the module-routes drawer.
 
 ## Scripts
 
@@ -199,7 +215,7 @@ Trace query params (sent by `api.ts`): `limit`, `moduleId`, `errorsOnly`,
 **Dev / build**
 
 - `vite` 8 + `@vitejs/plugin-react`
-- `typescript` 6
+- `typescript` 7
 - `oxlint`
 - `@types/*`
 
