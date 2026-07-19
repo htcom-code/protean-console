@@ -1,34 +1,15 @@
 # GitHub Actions CI — the same local gate contributors run (CONTRIBUTING.md):
 # lint then build. `build` runs only after `lint` passes. This is a client-only
-# SPA, so there is no publish step. Runs on PRs and pushes to main, and only when
-# source/build files change (doc-only changes are skipped).
+# SPA, so there is no publish step. Runs on every PR and push to main (no path
+# filter) so the branch-protection required checks `lint` / `build` always report
+# — otherwise a doc-only PR would never get a status and could not be merged.
 
 name: CI
 
 on:
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "index.html"
-      - "package.json"
-      - "package-lock.json"
-      - "tsconfig*.json"
-      - "vite.config.ts"
-      - ".oxlintrc.json"
-      - "components.json"
-      - ".github/workflows/ci.yml"
   pull_request:
-    paths:
-      - "src/**"
-      - "index.html"
-      - "package.json"
-      - "package-lock.json"
-      - "tsconfig*.json"
-      - "vite.config.ts"
-      - ".oxlintrc.json"
-      - "components.json"
-      - ".github/workflows/ci.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
