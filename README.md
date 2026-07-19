@@ -224,15 +224,16 @@ The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
 ## Authentication
 
 Protean does not impose auth on `/platform/**` by default — it delegates to the
-consuming app (typically Spring Security). The console's only job is to attach a
-credential to its outbound requests, at a **single choke point** (`getJson` in
-`src/lib/api.ts`). This is designed but **not yet implemented**; the scheme
-(Bearer / API key / OAuth2) is open. See [`docs/auth-path.md`](docs/auth-path.md).
+consuming app (typically Spring Security). Because that policy is yours, the
+console ships **auth-agnostic**: the operator attaches whatever credential the
+deployment expects, at a **single choke point** (`getJson` in `src/lib/api.ts`).
+This is **not yet implemented**; the scheme (Bearer / API key / OAuth2) is your
+choice. See the [authentication guide](docs/authentication.md).
 
 ## Roadmap
 
 - **Auth** — pick a scheme and implement the header provider + 401/403 surface
-  (design in `docs/auth-path.md`).
+  (see the [authentication guide](docs/authentication.md)).
 - **Server-side filtering** — `errorsOnly` / `status` / `minLatencyMs` are already
   sent as query params, but the recent-traces table still filters client-side too.
 - **i18n / analytics** — not set up (internal MVP).

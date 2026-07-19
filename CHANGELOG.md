@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps the last real data on screen (dimmed, marked stale with a live "updated
   Ns ago") and auto-recovers when the platform returns.
 - Light / dark theme toggle.
-- Project README, MIT `LICENSE`, and `docs/auth-path.md` (auth design note).
+- Project README, MIT `LICENSE`, and `docs/authentication.md` (operator
+  authentication guide).
 - Community health files: `CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`.
 - GitHub issue/PR templates, `CODEOWNERS`, `FUNDING`, and a lint + build CI
   workflow with Dependabot.

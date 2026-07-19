@@ -36,7 +36,7 @@ in mind when assessing impact:
 
 - **Credentials**: the console never bakes tokens into the build. Auth is designed
   to be injected at a single choke point (`getJson` in `src/lib/api.ts`) at runtime
-  or via a gitignored `.env`. See [`docs/auth-path.md`](docs/auth-path.md).
+  or via a gitignored `.env`. See the [authentication guide](docs/authentication.md).
 - **Data exposure**: the app only reads the Protean control-plane REST surface
   (`/platform/traces`, `/platform/traces/metrics`, `/platform/modules`). Securing
   those endpoints is the responsibility of the consuming platform (typically Spring
