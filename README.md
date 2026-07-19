@@ -226,9 +226,11 @@ The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
 Protean does not impose auth on `/platform/**` by default — it delegates to the
 consuming app (typically Spring Security). Because that policy is yours, the
 console ships **auth-agnostic**: the operator attaches whatever credential the
-deployment expects, at a **single choke point** (`getJson` in `src/lib/api.ts`).
-This is **not yet implemented**; the scheme (Bearer / API key / OAuth2) is your
-choice. See the [authentication guide](docs/authentication.md).
+deployment expects. REST requests share a single choke point (`getJson` in
+`src/lib/api.ts`), while the live SSE stream — opened with `EventSource`, which
+cannot send headers — is best secured with a session cookie. This is **not yet
+implemented**; the scheme is your choice. See the
+[authentication guide](docs/authentication.md).
 
 ## Roadmap
 
