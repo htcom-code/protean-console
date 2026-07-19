@@ -170,9 +170,11 @@ src/
   Components take plain props; state lives in `App.tsx` and the hooks.
 - `src/lib/types.ts` mirrors the Java records `RequestTrace` /
   `ModuleMetricsSnapshot` — **keep them in sync** with the backend.
-- **Styling**: Tailwind v4 with shadcn (`base-nova` / `olive`) on `@base-ui/react`
-  (not radix). Status and telemetry hues are extra tokens in `src/index.css`
-  (`--ok/--warn/--crit/--telemetry`), exposed via `@theme inline`.
+- **Styling**: Tailwind v4 with shadcn (`base-nova`) on `@base-ui/react`
+  (not radix). The neutral ramp is the shared **slate** scale aligned with the
+  protean-web homepage, plus a teal `--brand` token. Status and telemetry hues
+  are extra tokens in `src/index.css` (`--ok/--warn/--crit/--telemetry`), all
+  exposed via `@theme inline`.
 - Numeric/telemetry text is monospace + `tabular-nums`.
 
 ## Platform API surface
@@ -206,7 +208,7 @@ The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
 
 - `react` / `react-dom` 19
 - `@base-ui/react` — headless primitives (base, not radix)
-- `shadcn` / `@shadcn/react` — component style layer (`base-nova` / `olive`)
+- `shadcn` / `@shadcn/react` — component style layer (`base-nova` style)
 - `tailwindcss` 4 + `@tailwindcss/vite`, `tw-animate-css`
 - `class-variance-authority`, `clsx`, `tailwind-merge` — class composition
 - `lucide-react` — icons

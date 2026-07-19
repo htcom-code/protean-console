@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   classified (`unreachable` / `auth` 401·403 / `server`) with an 8s request
   timeout, and the console no longer silently replaces real data with mock. Mock
   data is used only for a cold start with no platform reachable.
+- Palette aligned with the protean-web homepage: the neutral ramp moved from the
+  olive base to the shared slate scale, the `chart-1..5` ramp is grayscale (the
+  single-hue chart accent stays `--telemetry`), and a teal `--brand` token was
+  added (exposed via `@theme inline`). Console status colors
+  (`--ok` / `--warn` / `--crit`) are unchanged.
+- Dependency maintenance (Dependabot): `vite` 8.1.5, `tailwindcss` 4.3.3,
+  `@tanstack/react-virtual` 3.14.6, `lucide-react` 1.25.0, `oxlint` 1.74.0, and
+  `actions/setup-node` v7 in CI.
 
 ### Removed
 - Time-range selector (5m / 15m / 1h / 6h): after the SSE switch the tabs only
