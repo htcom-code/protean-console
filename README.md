@@ -170,9 +170,11 @@ src/
   Components take plain props; state lives in `App.tsx` and the hooks.
 - `src/lib/types.ts` mirrors the Java records `RequestTrace` /
   `ModuleMetricsSnapshot` — **keep them in sync** with the backend.
-- **Styling**: Tailwind v4 with shadcn (`base-nova` / `olive`) on `@base-ui/react`
-  (not radix). Status and telemetry hues are extra tokens in `src/index.css`
-  (`--ok/--warn/--crit/--telemetry`), exposed via `@theme inline`.
+- **Styling**: Tailwind v4 with shadcn (`base-nova`) on `@base-ui/react`
+  (not radix). The neutral ramp is the shared **slate** scale aligned with the
+  protean-web homepage, plus a teal `--brand` token. Status and telemetry hues
+  are extra tokens in `src/index.css` (`--ok/--warn/--crit/--telemetry`), all
+  exposed via `@theme inline`.
 - Numeric/telemetry text is monospace + `tabular-nums`.
 
 ## Platform API surface
@@ -206,7 +208,7 @@ The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
 
 - `react` / `react-dom` 19
 - `@base-ui/react` — headless primitives (base, not radix)
-- `shadcn` / `@shadcn/react` — component style layer (`base-nova` / `olive`)
+- `shadcn` / `@shadcn/react` — component style layer (`base-nova` style)
 - `tailwindcss` 4 + `@tailwindcss/vite`, `tw-animate-css`
 - `class-variance-authority`, `clsx`, `tailwind-merge` — class composition
 - `lucide-react` — icons
@@ -222,15 +224,18 @@ The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
 ## Authentication
 
 Protean does not impose auth on `/platform/**` by default — it delegates to the
-consuming app (typically Spring Security). The console's only job is to attach a
-credential to its outbound requests, at a **single choke point** (`getJson` in
-`src/lib/api.ts`). This is designed but **not yet implemented**; the scheme
-(Bearer / API key / OAuth2) is open. See [`docs/auth-path.md`](docs/auth-path.md).
+consuming app (typically Spring Security). Because that policy is yours, the
+console ships **auth-agnostic**: the operator attaches whatever credential the
+deployment expects. REST requests share a single choke point (`getJson` in
+`src/lib/api.ts`), while the live SSE stream — opened with `EventSource`, which
+cannot send headers — is best secured with a session cookie. This is **not yet
+implemented**; the scheme is your choice. See the
+[authentication guide](docs/authentication.md).
 
 ## Roadmap
 
 - **Auth** — pick a scheme and implement the header provider + 401/403 surface
-  (design in `docs/auth-path.md`).
+  (see the [authentication guide](docs/authentication.md)).
 - **Server-side filtering** — `errorsOnly` / `status` / `minLatencyMs` are already
   sent as query params, but the recent-traces table still filters client-side too.
 - **i18n / analytics** — not set up (internal MVP).
