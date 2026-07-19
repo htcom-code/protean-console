@@ -2,6 +2,12 @@
   "name": "protean-console",
   "private": true,
   "version": "0.0.0",
+  "license": "MIT",
+  "author": "htjulia <htjulia1@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/htcom-code/protean-console.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

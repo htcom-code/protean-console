@@ -27,3 +27,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local tooling & non-npm lockfiles (this project uses npm — package-lock.json)
+.mcp.json
+pnpm-lock.yaml
+yarn.lock
+bun.lockb
