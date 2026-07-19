@@ -34,12 +34,14 @@ fix, and credit you if you wish once the issue is resolved.
 This console is a **read-only, client-only** SPA — it ships no server. Keep these
 in mind when assessing impact:
 
-- **Credentials**: the console never bakes tokens into the build. Auth is designed
-  to be injected at a single choke point (`getJson` in `src/lib/api.ts`) at runtime
-  or via a gitignored `.env`. See the [authentication guide](docs/authentication.md).
-- **Data exposure**: the app only reads the Protean control-plane REST surface
-  (`/platform/traces`, `/platform/traces/metrics`, `/platform/modules`). Securing
-  those endpoints is the responsibility of the consuming platform (typically Spring
-  Security).
+- **Credentials**: the console never bakes tokens into the build. REST requests
+  attach a credential at a single choke point (`getJson` in `src/lib/api.ts`) at
+  runtime or via a gitignored `.env`; the live SSE stream (`EventSource`, which
+  cannot send headers) is best secured with a session cookie. See the
+  [authentication guide](docs/authentication.md).
+- **Data exposure**: the app only reads the Protean control-plane surface — the SSE
+  stream (`/platform/traces/stream`) plus the REST endpoints (`/platform/traces`,
+  `/platform/traces/metrics`, `/platform/modules`). Securing those endpoints is the
+  responsibility of the consuming platform (typically Spring Security).
 - Reports about third-party dependencies are welcome; where possible, prefer
   reporting upstream as well.

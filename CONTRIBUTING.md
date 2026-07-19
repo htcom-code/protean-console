@@ -97,7 +97,9 @@ Keep PRs small and reviewable. Rebase on `main` if your branch falls behind.
 ## Code style & conventions
 
 - **TypeScript**, React 19 function components + hooks.
-- **Styling**: Tailwind v4 + shadcn (`base-nova` / `olive`) on `@base-ui/react`.
+- **Styling**: Tailwind v4 + shadcn (`base-nova`) on `@base-ui/react`; the neutral
+  ramp is the shared slate scale (aligned with the protean-web homepage), plus a
+  teal `--brand` token.
 - **Status color** (ok/warn/crit) is always paired with an icon/label — never color
   alone. Charts stay single-hue (telemetry); no red/green categorical encoding.
 - Numeric/telemetry text uses monospace + `tabular-nums`.
