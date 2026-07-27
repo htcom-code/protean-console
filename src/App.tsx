@@ -15,8 +15,13 @@ import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/hooks/use-auth'
 import { usePersistentState } from '@/hooks/use-persistent-state'
 import { cn } from '@/lib/utils'
+import type { RequestTrace } from '@/lib/types'
 
 const DEFAULT_SORT: MetricSort = { key: 'count', dir: 'desc' }
+// Stable stand-in for "no traces yet" (before the first snapshot arrives).
+// useTraceStore keys its effects off this array's identity, so handing it a
+// fresh `[]` on every render would re-trigger them on every render.
+const NO_TRACES: RequestTrace[] = []
 
 export default function App() {
   const { authenticated, signIn } = useAuth()
@@ -29,7 +34,7 @@ export default function App() {
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
   const persist = conn.status === 'live' || conn.status === 'disconnected' || conn.status === 'paused'
-  const traceStore = useTraceStore(data?.traces ?? [], persist)
+  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist)
 
   const selected = useMemo(() => {
     if (!selectedModuleId || !data) return null
