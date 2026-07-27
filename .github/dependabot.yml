@@ -1,15 +1,54 @@
 version: 2
 updates:
   # npm dependencies (React, Vite, Tailwind, shadcn/base-ui, oxlint, types).
+  # Grouped: one ungrouped PR per package saturated open-pull-requests-limit
+  # (5 open PRs while 9 packages were behind), so queued updates never opened
+  # and react could ship without react-dom. Groups keep lockstep packages in
+  # one PR and hold the weekly run to at most four npm PRs.
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # react and react-dom pin each other through peer ranges; the @types
+      # packages track the same runtime version. Majors group here too.
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      # the tailwind engine and its vite plugin ship as a matched pair.
+      tailwind:
+        patterns:
+          - tailwindcss
+          - "@tailwindcss/*"
+      # everything else, split so a runtime bump never rides along with
+      # tooling. Majors match no group and still arrive as their own PR.
+      npm-production:
+        dependency-type: production
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      npm-development:
+        dependency-type: development
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
 
-  # GitHub Actions used in .github/workflows/.
+  # GitHub Actions used in .github/workflows/. One PR for all action bumps —
+  # they are independent of each other and of the npm tree.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
