@@ -24,6 +24,11 @@ function merge(a: StoredTrace[], b: StoredTrace[]): StoredTrace[] {
   return [...byKey.values()].sort((x, y) => y.epochMillis - x.epochMillis)
 }
 
+/** True when both lists hold the same trace keys in the same order. */
+function sameRows(a: StoredTrace[], b: StoredTrace[]): boolean {
+  return a.length === b.length && a.every((t, i) => t._key === b[i]._key)
+}
+
 export interface TraceStoreView {
   rows: StoredTrace[]
   total: number
@@ -48,11 +53,14 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
   const rowsRef = useRef(rows)
   rowsRef.current = rows
 
-  // Sample mode: no persistence, just show what we were handed.
+  // Sample mode: no persistence, just show what we were handed. `passthrough` is
+  // a fresh array each run, so it is only committed when the contents actually
+  // differ — otherwise a caller whose `liveTraces` identity changes per render
+  // would drive setRows → render → effect until React's nested-update cap.
   useEffect(() => {
     if (persist) return
     const passthrough = liveTraces.map(withKey).sort((a, b) => b.epochMillis - a.epochMillis)
-    setRows(passthrough)
+    setRows((prev) => (sameRows(prev, passthrough) ? prev : passthrough))
     setTotal(passthrough.length)
     setHasMore(false)
   }, [persist, liveTraces])
