@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearTraces,
   countTraces,
@@ -11,6 +11,8 @@ import {
 import type { RequestTrace } from '@/lib/types'
 
 const PAGE = 200
+const NO_ROWS: StoredTrace[] = []
+const noop = () => {}
 
 function withKey(t: RequestTrace): StoredTrace {
   return { ...t, _key: traceKey(t) }
@@ -22,11 +24,6 @@ function merge(a: StoredTrace[], b: StoredTrace[]): StoredTrace[] {
   for (const t of a) byKey.set(t._key, t)
   for (const t of b) byKey.set(t._key, t)
   return [...byKey.values()].sort((x, y) => y.epochMillis - x.epochMillis)
-}
-
-/** True when both lists hold the same trace keys in the same order. */
-function sameRows(a: StoredTrace[], b: StoredTrace[]): boolean {
-  return a.length === b.length && a.every((t, i) => t._key === b[i]._key)
 }
 
 export interface TraceStoreView {
@@ -49,21 +46,24 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [dismissedSample, setDismissedSample] = useState<RequestTrace[] | null>(null)
 
+  // `loadOlder` reads the newest rows without being re-created on every batch,
+  // so the ref is mirrored in an effect rather than written during render.
   const rowsRef = useRef(rows)
-  rowsRef.current = rows
-
-  // Sample mode: no persistence, just show what we were handed. `passthrough` is
-  // a fresh array each run, so it is only committed when the contents actually
-  // differ — otherwise a caller whose `liveTraces` identity changes per render
-  // would drive setRows → render → effect until React's nested-update cap.
   useEffect(() => {
-    if (persist) return
-    const passthrough = liveTraces.map(withKey).sort((a, b) => b.epochMillis - a.epochMillis)
-    setRows((prev) => (sameRows(prev, passthrough) ? prev : passthrough))
-    setTotal(passthrough.length)
-    setHasMore(false)
-  }, [persist, liveTraces])
+    rowsRef.current = rows
+  }, [rows])
+
+  // Sample mode is a pure function of the traces we were handed, so it is
+  // derived during render instead of synced into state through an effect. That
+  // removes the setRows → render → effect cycle a caller with an unstable
+  // `liveTraces` identity used to drive (it hit React's nested-update cap), and
+  // with it the `sameRows` guard that existed only to break that cycle.
+  const sampleRows = useMemo(
+    () => (persist ? NO_ROWS : liveTraces.map(withKey).sort((a, b) => b.epochMillis - a.epochMillis)),
+    [persist, liveTraces],
+  )
 
   // Live mode: seed the display window from IDB once.
   useEffect(() => {
@@ -134,6 +134,23 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
       setHasMore(false)
     })()
   }, [])
+
+  // Sample mode has nothing persisted to wipe, so "clear" records which batch
+  // was dismissed. Storing the input alongside the decision keeps the view
+  // derivable: a new batch has a new identity and shows up on its own.
+  const clearSample = useCallback(() => setDismissedSample(liveTraces), [liveTraces])
+
+  if (!persist) {
+    const shown = dismissedSample === liveTraces ? NO_ROWS : sampleRows
+    return {
+      rows: shown,
+      total: shown.length,
+      hasMore: false,
+      loadingOlder: false,
+      loadOlder: noop,
+      clear: clearSample,
+    }
+  }
 
   return { rows, total, hasMore, loadingOlder, loadOlder, clear }
 }

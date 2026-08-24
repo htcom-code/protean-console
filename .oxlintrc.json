@@ -3,6 +3,12 @@
   "plugins": ["react", "typescript", "oxc"],
   "rules": {
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    // `useVirtualizer` (@tanstack/react-virtual) returns functions the React
+    // Compiler cannot memoize, so this rule fires on every virtualized table.
+    // We do not run the compiler (plain @vitejs/plugin-react, no
+    // babel-plugin-react-compiler), so there is nothing to act on. Re-enable
+    // this rule if the compiler is ever adopted — the advice becomes real then.
+    "react/incompatible-library": "off"
   }
 }
