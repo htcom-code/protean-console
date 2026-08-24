@@ -25,13 +25,18 @@ export function ModuleDetailPanel({
   metrics: ModuleMetricsSnapshot | null
   onClose: () => void
 }) {
-  const [routes, setRoutes] = useState<RoutesState>({ status: 'loading' })
+  // The fetched routes are stored together with the module they belong to, so
+  // the view state is derived rather than reset from the effect. Resetting it
+  // there showed the previous module's routes for one frame after `moduleId`
+  // changed; keying the result to its input makes a mismatch mean "loading".
+  const [loaded, setLoaded] = useState<{ moduleId: string; result: RoutesResult } | null>(null)
+  const routes: RoutesState =
+    loaded && loaded.moduleId === moduleId ? { status: 'done', result: loaded.result } : { status: 'loading' }
 
   useEffect(() => {
     let cancelled = false
-    setRoutes({ status: 'loading' })
     void getModuleRoutes(moduleId).then((result) => {
-      if (!cancelled) setRoutes({ status: 'done', result })
+      if (!cancelled) setLoaded({ moduleId, result })
     })
     return () => {
       cancelled = true

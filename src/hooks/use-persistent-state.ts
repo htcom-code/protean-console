@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 // All console-owned localStorage keys share the `pc:` prefix so they're easy to
 // spot and clear as a group. Callers pass the full key, e.g. 'pc:theme'.
@@ -29,10 +29,6 @@ export function writeStored<T>(key: string, value: T): void {
  */
 export function usePersistentState<T>(key: string, initial: T): [T, (v: T | ((prev: T) => T)) => void] {
   const [value, setValue] = useState<T>(() => readStored(key, initial))
-
-  // Keep the latest value in a ref so the setter identity stays stable.
-  const valueRef = useRef(value)
-  valueRef.current = value
 
   useEffect(() => {
     writeStored(key, value)
