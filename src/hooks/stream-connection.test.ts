@@ -187,6 +187,111 @@ describe('a platform that stops answering entirely', () => {
   })
 })
 
+describe('a platform that talks but cannot be understood', () => {
+  /**
+   * The stream is open, frames keep arriving on time, and not one of them can be
+   * read. The data is as stale as it would be in an outage, but the cause is not
+   * an outage — and the two call for different words and different actions. Saying
+   * "unreachable" about a platform that is answering is a false statement to the
+   * operator, and rebuilding the stream only fetches the same unreadable frames.
+   */
+  const malformedTick = (es: FakeEventSource) => {
+    es.emit('modules', '{"swapped":"greeter","version":"2"}')
+    es.emit('metrics', '{"metrics":[]}')
+    es.emit('summary', '[]')
+  }
+
+  it('does not call a talking platform unreachable', () => {
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+
+    for (let i = 0; i < 10; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+        malformedTick(FakeEventSource.current())
+      })
+    }
+
+    expect(result.current.conn.status).toBe('unreadable')
+    // Every channel it sent is marked, so the panels can say which data is frozen.
+    expect(result.current.channels.modules.stale).toBe(true)
+    expect(result.current.channels.metrics.stale).toBe(true)
+    expect(result.current.channels.summary.stale).toBe(true)
+  })
+
+  it('keeps the stream it already has', () => {
+    // Tearing it down buys nothing: the platform would send the same frames to the
+    // next one, and the rebuild loop would run forever against a live platform.
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+    const built = FakeEventSource.instances.length
+
+    for (let i = 0; i < 20; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+        malformedTick(FakeEventSource.current())
+      })
+    }
+
+    expect(result.current.conn.status).toBe('unreadable')
+    expect(FakeEventSource.instances.length, 'the stream was rebuilt while it was still delivering').toBe(built)
+    expect(FakeEventSource.instances.filter((es) => !es.closed)).toHaveLength(1)
+  })
+
+  it('reports the outage once a talking platform goes quiet', () => {
+    // Unreadable is not a resting place. If the frames stop too, that is an outage
+    // and has to be reported as one.
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+    for (let i = 0; i < 8; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+        malformedTick(FakeEventSource.current())
+      })
+    }
+    expect(result.current.conn.status).toBe('unreadable')
+
+    act(() => {
+      vi.advanceTimersByTime(7_000) // nothing at all now
+    })
+    expect(result.current.conn.status).toBe('disconnected')
+  })
+
+  it('returns to live when the platform starts making sense again', () => {
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+    for (let i = 0; i < 8; i++) {
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+        malformedTick(FakeEventSource.current())
+      })
+    }
+    expect(result.current.conn.status).toBe('unreadable')
+
+    act(() => {
+      replay(FakeEventSource.current(), GO_CONNECT)
+    })
+    expect(result.current.conn.status).toBe('live')
+    expect(result.current.channels.modules.stale).toBe(false)
+  })
+})
+
 describe('cold start', () => {
   it('falls back to sample data when no platform ever answers', () => {
     const { result } = renderHook(() => useConsoleData())

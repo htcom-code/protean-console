@@ -33,6 +33,14 @@ function statusView(conn: ConnState): StatusView {
           Icon: ServerCrash,
         }
       return { label: 'DISCONNECTED', tone: 'crit', ping: false, title: 'platform unreachable — reconnecting', Icon: WifiOff }
+    case 'unreadable':
+      return {
+        label: 'UNREADABLE',
+        tone: 'crit',
+        ping: false,
+        title: 'the platform is connected and sending, but nothing it sends can be read',
+        Icon: ShieldAlert,
+      }
     case 'paused':
       return { label: 'PAUSED', tone: 'warn', ping: false, title: 'stream disconnected — showing last data', Icon: Pause }
     default:

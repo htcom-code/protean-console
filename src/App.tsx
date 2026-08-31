@@ -34,7 +34,11 @@ export default function App() {
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
-  const persist = conn.status === 'live' || conn.status === 'disconnected' || conn.status === 'paused'
+  const persist =
+    conn.status === 'live' ||
+    conn.status === 'disconnected' ||
+    conn.status === 'unreadable' ||
+    conn.status === 'paused'
   const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist)
 
   // Each panel is dimmed by the channel that feeds it, not by the connection as a

@@ -32,6 +32,10 @@ const RECONNECT_DELAY_MS = 5000
  * - `disconnected` — the stream dropped after being live; last real data is kept
  *                    and marked stale. The hook rebuilds the stream on a timer, so
  *                    it returns to `live` once the platform is reachable again.
+ * - `unreadable`   — frames are still arriving and none of them can be read. The
+ *                    platform is not unreachable and rebuilding the stream would
+ *                    fetch the same unreadable frames, so this is reported as what
+ *                    it is rather than folded into an outage.
  *
  * Note: EventSource can't surface HTTP status on failure, so a dropped stream is
  * always reported as `unreachable` (the auth/server distinction the old polling
@@ -75,6 +79,7 @@ export type ConnState =
   | { status: 'sample' }
   | { status: 'live'; lastUpdated: number }
   | { status: 'disconnected'; reason: ConnReason; httpStatus?: number; lastUpdated: number | null }
+  | { status: 'unreadable'; lastUpdated: number | null } // connected and receiving, but nothing we can read
   | { status: 'paused'; lastUpdated: number | null } // stream deliberately closed by the user
 
 function mockData(now: number): LiveData {
@@ -107,6 +112,10 @@ export function useConsoleData() {
   const summaryRef = useRef<TraceSummary | null>(null)
   const everOpenRef = useRef(false)
   const lastUpdatedRef = useRef<number | null>(null)
+  // When a frame last arrived at all, readable or not. `lastUpdatedRef` only moves
+  // for frames we could use, so the two together separate "the platform stopped
+  // talking" from "the platform is talking and we cannot understand it".
+  const lastFrameAtRef = useRef<number | null>(null)
 
   useEffect(() => {
     // Deliberately disconnected — keep the last data frozen on screen.
@@ -162,6 +171,7 @@ export function useConsoleData() {
     // is not evidence the platform is healthy, which is what makes a stream of
     // nothing but bad frames surface as an outage on the watchdog below.
     function reject(channel: Channel) {
+      lastFrameAtRef.current = Date.now()
       setChannels((prev) => {
         const rejected = prev[channel].rejected + 1
         return {
@@ -228,6 +238,22 @@ export function useConsoleData() {
 
     function onSilence() {
       if (closed) return
+      // Frames still arriving, none of them usable. The platform is reachable and
+      // talking, so calling this unreachable would be false, and rebuilding the
+      // stream would only fetch the same frames again. Report it for what it is
+      // and keep the stream — the panels already name which channel went quiet.
+      const lastFrame = lastFrameAtRef.current
+      if (everOpenRef.current && lastFrame != null && Date.now() - lastFrame < STALE_TIMEOUT_MS) {
+        setConn({ status: 'unreadable', lastUpdated: lastUpdatedRef.current })
+        // Anchored to the last frame, like the deadline above. Re-arming a fresh
+        // window here would let the check drift a window behind the traffic, so a
+        // platform that went unreadable and then silent could take twice as long to
+        // be called an outage as one that simply went silent.
+        window.clearTimeout(staleTimer)
+        staleTimer = window.setTimeout(onSilence, Math.max(0, STALE_TIMEOUT_MS - (Date.now() - lastFrame)))
+        return
+      }
+
       // Only surface "disconnected" once we've actually been live; a cold start
       // with no platform stays on the sample demo (handled below).
       if (everOpenRef.current) {
@@ -260,6 +286,7 @@ export function useConsoleData() {
     function markLive() {
       everOpenRef.current = true
       lastUpdatedRef.current = Date.now()
+      lastFrameAtRef.current = lastUpdatedRef.current
       window.clearTimeout(sampleTimer)
       armWatchdog()
       setConn({ status: 'live', lastUpdated: lastUpdatedRef.current })
