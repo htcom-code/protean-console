@@ -34,7 +34,10 @@ export function LatencyChart({ series }: { series: number[] }) {
   // so the axis has headroom without an arbitrary multiplier.
   const gridVals = niceTicks(Math.max(...series))
   const max = gridVals[gridVals.length - 1] || 1
-  const x = (i: number) => PAD.l + (i / (n - 1)) * (W - PAD.l - PAD.r)
+  // A single bucket has no span to interpolate across — `i / (n - 1)` would be
+  // 0/0 and poison every coordinate with NaN. Pin the lone sample to the right
+  // edge, where the newest sample always sits for n > 1.
+  const x = (i: number) => (n === 1 ? W - PAD.r : PAD.l + (i / (n - 1)) * (W - PAD.l - PAD.r))
   const y = (v: number) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b)
 
   const pts = series.map((v, i) => `${x(i)},${y(v)}`).join(' ')
@@ -78,8 +81,12 @@ export function LatencyChart({ series }: { series: number[] }) {
               </text>
             </g>
           ))}
-          <polygon points={area} fill={`url(#${gradId})`} />
-          <polyline points={pts} fill="none" stroke="var(--telemetry)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          {/* Line and area need two points to mean anything; with one bucket the
+              area would ramp from a zero baseline it never measured. Show the dot alone. */}
+          {n > 1 && <polygon points={area} fill={`url(#${gradId})`} />}
+          {n > 1 && (
+            <polyline points={pts} fill="none" stroke="var(--telemetry)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          )}
           <circle cx={x(n - 1)} cy={y(series[n - 1])} r={3.6} fill="var(--telemetry)" stroke="var(--card)" strokeWidth={2} />
           {hover != null && (
             <>
