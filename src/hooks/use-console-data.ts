@@ -14,6 +14,12 @@ const SAMPLE_DELAY_MS = 2500
 // for long. If no event arrives within this window the connection is dead — even
 // when EventSource still reports it open (see the watchdog note below).
 const STALE_TIMEOUT_MS = 6000
+// Consecutive malformed frames on one channel before its panel is marked stale.
+// One bad frame is an incident, not an outage: a platform mid-deploy can emit a
+// single odd frame and recover on the next tick. Three at 1Hz is three seconds —
+// under the silence watchdog below, so a channel going bad can never take longer
+// to surface than the whole stream going quiet.
+const MALFORMED_TOLERANCE = 3
 // After a dead/stalled stream, wait this long before rebuilding the EventSource.
 // Keep in sync with the "retrying every 5s" copy in ConnectionBanner.
 const RECONNECT_DELAY_MS = 5000
@@ -32,6 +38,38 @@ const RECONNECT_DELAY_MS = 5000
  * path made is not available over SSE). It also can't be trusted to fire `error`
  * when the connection dies behind a proxy, so a silence watchdog covers that case.
  */
+/**
+ * A channel the platform publishes on. Each one feeds a different part of the
+ * screen, so they are tracked apart: one bad channel must not blank the rest.
+ */
+export type Channel = 'trace' | 'metrics' | 'modules' | 'summary'
+
+/**
+ * Per-channel health. `rejected` counts frames dropped since the channel was last
+ * correct, `total` every frame it has ever dropped — the first drives the stale
+ * mark, the second is what the badge reports so a burst that recovered is still
+ * visible to whoever is looking.
+ *
+ * `stale: true` means: this panel is showing the last thing the platform said
+ * correctly, and the platform has since sent something we could not read. It does
+ * not say why. We do not know why.
+ */
+export interface ChannelHealth {
+  rejected: number
+  total: number
+  stale: boolean
+}
+
+export type ChannelStates = Record<Channel, ChannelHealth>
+
+const HEALTHY: ChannelHealth = { rejected: 0, total: 0, stale: false }
+export const ALL_HEALTHY: ChannelStates = {
+  trace: HEALTHY,
+  metrics: HEALTHY,
+  modules: HEALTHY,
+  summary: HEALTHY,
+}
+
 export type ConnState =
   | { status: 'initial' }
   | { status: 'sample' }
@@ -61,6 +99,7 @@ export function useConsoleData() {
   const [data, setData] = useState<LiveData | null>(null)
   const [conn, setConn] = useState<ConnState>({ status: 'initial' })
   const [streaming, setStreaming] = useState(true)
+  const [channels, setChannels] = useState<ChannelStates>(ALL_HEALTHY)
 
   const tracesRef = useRef<RequestTrace[]>([])
   const metricsRef = useRef<ModuleMetricsSnapshot[]>([])
@@ -109,12 +148,63 @@ export function useConsoleData() {
         .slice(0, TRACE_WINDOW)
     }
 
-    function parse<T>(e: Event): T | null {
+    function parse(e: Event): unknown {
       try {
-        return JSON.parse((e as MessageEvent).data) as T
+        return JSON.parse((e as MessageEvent).data) as unknown
       } catch {
+        return undefined // unparseable is just another malformed frame
+      }
+    }
+
+    // A frame we could not read leaves the channel's last good data on screen. It
+    // must not also leave the screen claiming to be current, so the channel is
+    // marked and the panel says so. Deliberately not `markLive()`: a rejected frame
+    // is not evidence the platform is healthy, which is what makes a stream of
+    // nothing but bad frames surface as an outage on the watchdog below.
+    function reject(channel: Channel) {
+      setChannels((prev) => {
+        const rejected = prev[channel].rejected + 1
+        return {
+          ...prev,
+          [channel]: { rejected, total: prev[channel].total + 1, stale: rejected >= MALFORMED_TOLERANCE },
+        }
+      })
+    }
+
+    // One correct frame clears the mark. The channel is current again, and saying
+    // otherwise would be its own kind of lie.
+    function accept(channel: Channel) {
+      setChannels((prev) =>
+        prev[channel].rejected === 0 ? prev : { ...prev, [channel]: { ...prev[channel], rejected: 0, stale: false } },
+      )
+    }
+
+    /**
+     * Read a frame as the shape its channel promises, or reject it.
+     *
+     * Only the shape — an array where the contract says array, an object where it
+     * says object. Per-field validation belongs to platform-parity checking, not
+     * here: the job of this guard is that one malformed frame cannot take the
+     * console down or quietly freeze a panel.
+     */
+    function readArray<T>(e: Event, channel: Channel): T[] | null {
+      const v = parse(e)
+      if (!Array.isArray(v)) {
+        reject(channel)
         return null
       }
+      accept(channel)
+      return v as T[]
+    }
+
+    function readObject<T>(e: Event, channel: Channel): T | null {
+      const v = parse(e)
+      if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+        reject(channel)
+        return null
+      }
+      accept(channel)
+      return v as T
     }
 
     // (Re)arm the silence watchdog. A healthy stream pushes metrics/modules
@@ -192,28 +282,28 @@ export function useConsoleData() {
       es.addEventListener('open', () => markLive())
 
       es.addEventListener('trace', (e) => {
-        const batch = parse<RequestTrace[]>(e)
+        const batch = readArray<RequestTrace>(e, 'trace')
         if (!batch) return
         mergeTraces(batch)
         markLive()
         publish()
       })
       es.addEventListener('metrics', (e) => {
-        const m = parse<ModuleMetricsSnapshot[]>(e)
+        const m = readArray<ModuleMetricsSnapshot>(e, 'metrics')
         if (!m) return
         metricsRef.current = m
         markLive()
         publish()
       })
       es.addEventListener('modules', (e) => {
-        const m = parse<ModuleStatus[]>(e)
+        const m = readArray<ModuleStatus>(e, 'modules')
         if (!m) return
         modulesRef.current = m
         markLive()
         publish()
       })
       es.addEventListener('summary', (e) => {
-        const s = parse<TraceSummary>(e)
+        const s = readObject<TraceSummary>(e, 'summary')
         if (!s) return
         summaryRef.current = s
         markLive()
@@ -252,5 +342,5 @@ export function useConsoleData() {
     }
   }, [streaming])
 
-  return { data, conn, streaming, setStreaming }
+  return { data, conn, channels, streaming, setStreaming }
 }
