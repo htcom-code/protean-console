@@ -82,6 +82,111 @@ describe.each(PLATFORMS)('$name platform', ({ connect }) => {
   })
 })
 
+describe('a platform that stops answering entirely', () => {
+  /**
+   * The failure the silence watchdog exists for, in its harshest form: the stream
+   * is gone and every attempt to rebuild it is refused. No frame ever arrives
+   * again, so nothing but the watchdog can notice — and the operator has to be
+   * told, because a console that still says LIVE over a dead platform is worse
+   * than one that says nothing at all.
+   *
+   * Rebuilding is the hook's own doing (`reconnect` → `open`), and `open` re-arms
+   * the watchdog. So this is also the scenario that asks whether the retry loop
+   * can keep pushing the deadline it is supposed to trip.
+   */
+  it('reports the outage instead of holding LIVE while every reconnect is refused', () => {
+    const { result } = renderHook(() => useConsoleData())
+
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+    expect(result.current.conn.status).toBe('live')
+
+    // The platform disappears. Each rebuilt stream is refused at once, which is
+    // what a browser reports when the port stops listening.
+    let elapsed = 0
+    for (let i = 0; i < 12 && result.current.conn.status === 'live'; i++) {
+      act(() => {
+        FakeEventSource.current().emit('error')
+      })
+      act(() => {
+        vi.advanceTimersByTime(5_100) // RECONNECT_DELAY_MS, then `open` runs
+        elapsed += 5_100
+      })
+    }
+
+    expect(result.current.conn.status, `still LIVE after ${elapsed}ms of refused reconnects`).toBe('disconnected')
+  })
+
+  it('reports the outage when the stream dies without ever raising an error', () => {
+    // The case the watchdog was written for: a dev proxy holds the client socket
+    // open after the upstream is gone, so `error` never fires and only the gap in
+    // the 1Hz frames gives it away.
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+    act(() => {
+      vi.advanceTimersByTime(6_500)
+    })
+    expect(result.current.conn.status).toBe('disconnected')
+  })
+
+  it('reports the outage again after a reconnect that succeeds and then dies', () => {
+    // Recovery must not spend the watchdog. A stream that comes back and drops
+    // again has to be reported the second time too, or the console is honest
+    // exactly once per page load.
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+
+    for (let cycle = 0; cycle < 2; cycle++) {
+      act(() => {
+        vi.advanceTimersByTime(6_500) // dies quietly
+      })
+      expect(result.current.conn.status, `cycle ${cycle}: outage not reported`).toBe('disconnected')
+
+      act(() => {
+        vi.advanceTimersByTime(5_100) // the hook rebuilds the stream
+      })
+      act(() => {
+        replay(FakeEventSource.current(), GO_CONNECT) // and the platform answers
+      })
+      expect(result.current.conn.status, `cycle ${cycle}: recovery not reported`).toBe('live')
+    }
+  })
+
+  it('recovers when the platform comes back', () => {
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+
+    // Long enough to be reported as an outage under any tolerance.
+    for (let i = 0; i < 12; i++) {
+      act(() => {
+        FakeEventSource.current().emit('error')
+      })
+      act(() => {
+        vi.advanceTimersByTime(5_100)
+      })
+    }
+    act(() => {
+      replay(FakeEventSource.current(), GO_CONNECT)
+    })
+    expect(result.current.conn.status).toBe('live')
+  })
+})
+
 describe('cold start', () => {
   it('falls back to sample data when no platform ever answers', () => {
     const { result } = renderHook(() => useConsoleData())
@@ -98,6 +203,40 @@ describe('cold start', () => {
     })
     expect(result.current.conn.status).toBe('sample')
     expect(result.current.data?.traces.length).toBeGreaterThan(0)
+  })
+
+  it('falls back to sample data even while every connect attempt is refused', () => {
+    // A cold start against a platform that is simply not there. The refused
+    // attempts must not keep the console on the connecting spinner: with nothing
+    // ever delivered there is no real data to protect, so the explorable sample
+    // is the honest thing to show — and `disconnected` would claim we had once
+    // been connected.
+    const { result } = renderHook(() => useConsoleData())
+
+    for (let i = 0; i < 3; i++) {
+      act(() => {
+        FakeEventSource.current().emit('error')
+      })
+      act(() => {
+        vi.advanceTimersByTime(5_100)
+      })
+    }
+    expect(result.current.conn.status).toBe('sample')
+    expect(result.current.data?.traces.length).toBeGreaterThan(0)
+  })
+
+  it('does not call a cold start an outage', () => {
+    // Nothing has ever arrived, so there is nothing to have lost. Reporting
+    // `disconnected` here would claim a connection the console never had, and the
+    // banner would tell the operator the platform went down when it may simply
+    // not be running yet. The watchdog does come due — this asserts what it must
+    // not conclude when it does.
+    const { result } = renderHook(() => useConsoleData())
+
+    act(() => {
+      vi.advanceTimersByTime(7_000) // past both the sample delay and the watchdog
+    })
+    expect(result.current.conn.status).toBe('sample')
   })
 
   it('never shows sample data once a platform has answered', () => {

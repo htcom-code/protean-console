@@ -81,6 +81,11 @@ export function useConsoleData() {
     let staleTimer: number | undefined
     let reconnectTimer: number | undefined
     let closed = false
+    // When the stream currently being listened to was built. Reporting an outage
+    // and tearing a stream down are different decisions on different clocks: the
+    // first is owed to the operator the moment the data stops, the second must wait
+    // until this stream has had its own chance to deliver something.
+    let openedAt = 0
 
     function publish() {
       const traces = tracesRef.current
@@ -117,9 +122,18 @@ export function useConsoleData() {
     // is dead — even when EventSource still reports it open. A dev proxy (Vite) can
     // hold the client socket open after the upstream dies, so 'error' never fires;
     // the watchdog is then the ONLY signal that we've lost the platform.
+    //
+    // The deadline is anchored to the last frame we accepted, not to this call, so
+    // re-arming can only bring it closer. `open` re-arms on every rebuilt stream,
+    // and a refused platform rebuilds every RECONNECT_DELAY_MS (5s) — under the 6s
+    // window. Setting a fresh 6s each time let the retry loop postpone the deadline
+    // it exists to trip, and the console held LIVE over a platform that was gone
+    // for as long as it kept failing.
     function armWatchdog() {
       window.clearTimeout(staleTimer)
-      staleTimer = window.setTimeout(onSilence, STALE_TIMEOUT_MS)
+      const last = lastUpdatedRef.current
+      const remaining = last == null ? STALE_TIMEOUT_MS : Math.max(0, STALE_TIMEOUT_MS - (Date.now() - last))
+      staleTimer = window.setTimeout(onSilence, remaining)
     }
 
     function onSilence() {
@@ -129,7 +143,17 @@ export function useConsoleData() {
       if (everOpenRef.current) {
         setConn({ status: 'disconnected', reason: 'unreachable', lastUpdated: lastUpdatedRef.current })
       }
-      reconnect()
+      // Rebuilding is on the stream's own clock. A stream built moments ago may
+      // simply not have spoken yet, and closing it here would end the recovery it
+      // was opened for — the deadline above is anchored to the last frame, so it
+      // can come due while this stream is still new.
+      const streamAge = Date.now() - openedAt
+      if (streamAge >= STALE_TIMEOUT_MS) {
+        reconnect()
+        return
+      }
+      window.clearTimeout(staleTimer)
+      staleTimer = window.setTimeout(onSilence, STALE_TIMEOUT_MS - streamAge)
     }
 
     // Tear down the (possibly half-open) stream and rebuild it after a short delay,
@@ -152,6 +176,7 @@ export function useConsoleData() {
     }
 
     function open() {
+      openedAt = Date.now()
       try {
         es = new EventSource(STREAM_URL)
       } catch {
