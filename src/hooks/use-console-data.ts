@@ -21,7 +21,10 @@ const STALE_TIMEOUT_MS = 6000
 // to surface than the whole stream going quiet.
 const MALFORMED_TOLERANCE = 3
 // After a dead/stalled stream, wait this long before rebuilding the EventSource.
-// Keep in sync with the "retrying every 5s" copy in ConnectionBanner.
+// How long to wait before rebuilding a stream that failed. This is not the whole
+// gap between attempts: when a stream dies without raising `error`, the silence
+// window has to elapse first, which measured 11s end to end. ConnectionBanner
+// quotes no interval for that reason.
 const RECONNECT_DELAY_MS = 5000
 
 /**

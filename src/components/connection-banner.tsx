@@ -62,9 +62,14 @@ export function ConnectionBanner({ conn }: { conn: Disconnected }) {
         <span className="font-semibold">{title}</span>
         <span className="text-crit/85">{detail}</span>
         <span className="font-mono text-[11.5px] text-crit/70">
+          {/* No interval is quoted. The gap between attempts is not one number: a
+              refused connection raises `error` and retries on RECONNECT_DELAY_MS,
+              while a stream that dies without raising one is only noticed after the
+              silence window, so the same banner would have to say 5s and 11s at
+              once. Measured 2026-09-01; the copy used to claim 5s for both. */}
           {hasStale
-            ? `showing last data · updated ${relativeAge(conn.lastUpdated!, now)} · retrying every 5s`
-            : 'no data loaded yet · retrying every 5s'}
+            ? `showing last data · updated ${relativeAge(conn.lastUpdated!, now)} · retrying`
+            : 'no data loaded yet · retrying'}
         </span>
       </div>
     </div>
