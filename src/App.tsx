@@ -29,12 +29,12 @@ export default function App() {
   const [sort, setSort] = usePersistentState<MetricSort>('pc:metricsSort', DEFAULT_SORT)
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
-  const { data, conn, streaming, setStreaming, resetTraces } = useConsoleData()
+  const { data, conn, streaming, setStreaming } = useConsoleData()
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
   const persist = conn.status === 'live' || conn.status === 'disconnected' || conn.status === 'paused'
-  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist, resetTraces)
+  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist)
 
   const selected = useMemo(() => {
     if (!selectedModuleId || !data) return null
