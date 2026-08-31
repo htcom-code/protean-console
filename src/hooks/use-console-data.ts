@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { deriveP95, type ConnReason, type LiveData } from '@/lib/api'
 import { mockLatencySeries, mockMetrics, mockModules, mockSummary, mockTraces } from '@/lib/mock'
 import { traceKey } from '@/lib/trace-db'
@@ -227,5 +227,13 @@ export function useConsoleData() {
     }
   }, [streaming])
 
-  return { data, conn, streaming, setStreaming }
+  // Drop the in-memory trace window. The trace store wipes IndexedDB, but this
+  // window is what gets persisted on the next event — leaving it intact means a
+  // cleared row is written straight back, so clearing has to reach both.
+  const resetTraces = useCallback(() => {
+    tracesRef.current = []
+    setData((prev) => (prev ? { ...prev, traces: [], latencyP95: [] } : prev))
+  }, [])
+
+  return { data, conn, streaming, setStreaming, resetTraces }
 }

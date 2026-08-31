@@ -37,24 +37,6 @@ export function TraceTable({ store }: { store: TraceStoreView }) {
   const [chip, setChip] = useState<ChipKey>('all')
   const [q, setQ] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
-  const [confirmClear, setConfirmClear] = useState(false)
-  const confirmTimer = useRef<number | undefined>(undefined)
-
-  // First click arms; a second click within the window clears. Guards against an
-  // accidental wipe of the retained history.
-  function onClearClick() {
-    if (!confirmClear) {
-      setConfirmClear(true)
-      window.clearTimeout(confirmTimer.current)
-      confirmTimer.current = window.setTimeout(() => setConfirmClear(false), 3000)
-      return
-    }
-    window.clearTimeout(confirmTimer.current)
-    setConfirmClear(false)
-    clear()
-  }
-
-  useEffect(() => () => window.clearTimeout(confirmTimer.current), [])
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -135,14 +117,11 @@ export function TraceTable({ store }: { store: TraceStoreView }) {
           ))}
           <button
             type="button"
-            onClick={onClearClick}
+            onClick={clear}
             disabled={total === 0}
-            aria-label={confirmClear ? 'Click again to clear retained trace history' : 'Clear retained trace history'}
-            title={confirmClear ? 'Click again to clear all' : 'Clear retained trace history (IndexedDB)'}
-            className={cn(
-              'inline-flex items-center justify-center rounded-full border p-1.5 transition-colors disabled:opacity-40',
-              confirmClear ? 'border-crit bg-crit text-white' : 'text-muted-foreground hover:text-foreground',
-            )}
+            aria-label="Clear retained trace history"
+            title="Clear retained trace history (IndexedDB)"
+            className="inline-flex items-center justify-center rounded-full border p-1.5 text-muted-foreground transition-colors hover:border-crit hover:text-crit disabled:opacity-40"
           >
             <Trash2 className="size-3.5" aria-hidden />
           </button>
