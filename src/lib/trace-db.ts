@@ -53,6 +53,25 @@ function db(): Promise<IDBPDatabase<TraceDBSchema>> {
 }
 
 /**
+ * Mark a transaction's completion as observed.
+ *
+ * A refused write rejects the *request*, and the browser then aborts the whole
+ * transaction. The caller learns about it from the request — the `await` on the puts
+ * rejects there and never reaches `await tx.done` — so `tx.done` rejects with an
+ * `AbortError` that nobody is waiting for, and the page logs an unhandled rejection
+ * for a failure the console has already handled and reported. `idb` creates that
+ * promise eagerly when the transaction opens, so it cannot be avoided by not
+ * touching it. This swallows nothing: the real error still comes out of the request,
+ * which is what the store reports.
+ *
+ * Found by giving `fake-indexeddb` a byte budget (`src/test/idb-quota.ts`) — no test
+ * could reach a real quota abort before that.
+ */
+function observeAbort(tx: { done: Promise<unknown> }): void {
+  void tx.done.catch(() => {})
+}
+
+/**
  * Upsert a batch (idempotent by key). All puts are issued synchronously within
  * one transaction — no intervening awaits — so the tx can't auto-close mid-batch.
  */
@@ -60,6 +79,7 @@ export async function upsertTraces(traces: RequestTrace[]): Promise<void> {
   if (traces.length === 0) return
   const database = await db()
   const tx = database.transaction(STORE, 'readwrite')
+  observeAbort(tx)
   await Promise.all(traces.map((t) => tx.store.put({ ...t, _key: traceKey(t) })))
   await tx.done
 }
@@ -104,6 +124,7 @@ export async function pruneOldest(count: number): Promise<number> {
   if (count <= 0) return 0
   const database = await db()
   const tx = database.transaction(STORE, 'readwrite')
+  observeAbort(tx)
   let cursor = await tx.store.index(BY_EPOCH).openCursor(null, 'next') // oldest first
   let deleted = 0
   let toDelete = count
@@ -124,6 +145,7 @@ export async function pruneTraces(max = TRACE_RETENTION): Promise<number> {
   if (total <= max) return 0
   let toDelete = total - max
   const tx = database.transaction(STORE, 'readwrite')
+  observeAbort(tx)
   let cursor = await tx.store.index(BY_EPOCH).openCursor(null, 'next') // oldest first
   let deleted = 0
   while (cursor && toDelete > 0) {
