@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { AlertTriangle, Inbox, SearchX, Trash2 } from 'lucide-react'
+import { AlertTriangle, Database, Inbox, SearchX, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { MethodChip, StatusPill } from '@/components/status-pill'
+import { storageReason } from '@/components/stale-panel'
 import { cn } from '@/lib/utils'
 import { clock, num } from '@/lib/format'
 import type { TraceStoreView } from '@/hooks/use-trace-store'
@@ -40,6 +41,7 @@ export function TraceTable({
   /** Set when the trace channel has gone unreadable; shown in the header, never over the rows. */
   staleReason?: string | null
 }) {
+  const storageNote = storageReason(store.storage)
   const { rows: allRows, total, hasMore, loadingOlder, loadOlder, clear } = store
   const [chip, setChip] = useState<ChipKey>('all')
   const [q, setQ] = useState('')
@@ -92,6 +94,15 @@ export function TraceTable({
         <p className="flex items-start gap-1.5 font-mono text-[11px] leading-relaxed text-warn">
           <AlertTriangle className="mt-[1px] size-3 shrink-0" aria-hidden />
           {staleReason}
+        </p>
+      )}
+      {/* Storage trouble is a different kind of trouble from a stale channel — that
+          one is the platform's, this one is the browser's — so it reads in the
+          harder colour and says which operation failed. */}
+      {storageNote && (
+        <p className="flex items-start gap-1.5 font-mono text-[11px] leading-relaxed text-crit">
+          <Database className="mt-[1px] size-3 shrink-0" aria-hidden />
+          {storageNote}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2.5">

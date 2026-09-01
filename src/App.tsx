@@ -66,6 +66,7 @@ export default function App() {
         onToggleTheme={toggle}
         conn={conn}
         channels={channels}
+        storage={traceStore.storage}
       />
 
       {disconnected && <ConnectionBanner conn={conn} />}

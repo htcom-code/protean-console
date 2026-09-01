@@ -1,10 +1,11 @@
-import { Moon, Pause, Play, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
+import { Database, Moon, Pause, Play, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { platformOrigin, type ChannelStates, type ConnState } from '@/hooks/use-console-data'
+import type { StorageHealth } from '@/hooks/use-trace-store'
 
 type Tone = 'ok' | 'warn' | 'crit'
 type StatusView = { label: string; tone: Tone; ping: boolean; title: string; Icon?: ComponentType<{ className?: string }> }
@@ -62,6 +63,7 @@ export function TopBar({
   onToggleTheme,
   conn,
   channels,
+  storage,
 }: {
   streaming: boolean
   onToggleStream: () => void
@@ -69,6 +71,7 @@ export function TopBar({
   onToggleTheme: () => void
   conn: ConnState
   channels: ChannelStates
+  storage: StorageHealth
 }) {
   const s = statusView(conn)
   // Frames the platform sent that we could not read. Counted for the whole session,
@@ -96,6 +99,27 @@ export function TopBar({
         )}
         {s.label}
       </span>
+
+      {/* Storage gets its own badge rather than sharing the frame one. The two mean
+          different things — the platform is misbehaving vs this browser will not
+          store what it is shown — and folding them together would leave the
+          operator unable to tell which side to look at. */}
+      {storage.total > 0 && (
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[11px]',
+            storage.failed > 0 ? TONE_BADGE.crit : TONE_BADGE.warn,
+          )}
+          title={
+            storage.failed > 0
+              ? `browser storage is refusing ${storage.op} — ${storage.lastError ?? 'Error'}`
+              : 'browser storage refused an operation earlier and is working again'
+          }
+        >
+          <Database className="size-3" aria-hidden />
+          {storage.total} storage {storage.total === 1 ? 'error' : 'errors'}
+        </span>
+      )}
 
       {badFrames > 0 && (
         <span

@@ -26,6 +26,28 @@ function merge(a: StoredTrace[], b: StoredTrace[]): StoredTrace[] {
   return [...byKey.values()].sort((x, y) => y.epochMillis - x.epochMillis)
 }
 
+/**
+ * Whether the browser's storage is doing what the screen implies it is doing.
+ *
+ * IndexedDB can refuse a write (quota), refuse to open at all (private browsing,
+ * blocked site data), or fail a delete. Falling back to memory and saying nothing
+ * is the worst of the options: the rows on screen look retained, the counter looks
+ * current, and neither is true — the operator finds out on the next reload.
+ *
+ * `failed` counts consecutive failures and drives the message; `total` keeps every
+ * failure this session, because a burst that recovered still lost data.
+ * `lastError` is the `DOMException.name` the browser gave us — reported verbatim,
+ * since translating it into a cause is guessing.
+ */
+export interface StorageHealth {
+  failed: number
+  total: number
+  lastError: string | null
+  op: 'read' | 'write' | 'clear' | null
+}
+
+export const STORAGE_OK: StorageHealth = { failed: 0, total: 0, lastError: null, op: null }
+
 export interface TraceStoreView {
   rows: StoredTrace[]
   total: number
@@ -33,6 +55,7 @@ export interface TraceStoreView {
   loadingOlder: boolean
   loadOlder: () => void
   clear: () => void
+  storage: StorageHealth
 }
 
 /**
@@ -47,6 +70,32 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
   const [hasMore, setHasMore] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [dismissedSample, setDismissedSample] = useState<RequestTrace[] | null>(null)
+  const [storage, setStorage] = useState<StorageHealth>(STORAGE_OK)
+
+  /**
+   * A storage failure is reported on the first occurrence, unlike a malformed
+   * stream frame which is tolerated three times. The difference is what is lost: a
+   * dropped frame is one sample out of many arriving every second and the next tick
+   * usually carries the same state, while a failed write means data the user
+   * believes is saved is not — there is no "it will be fine next time" for that.
+   */
+  const failStorage = useCallback((op: NonNullable<StorageHealth['op']>, err: unknown) => {
+    const name = err instanceof DOMException ? err.name : err instanceof Error ? err.name : 'Error'
+    setStorage((prev) => ({ failed: prev.failed + 1, total: prev.total + 1, lastError: name, op }))
+  }, [])
+
+  /**
+   * Only the operation that was failing lifts its own mark.
+   *
+   * Clearing on *any* success looked equivalent and is not: the store seeds itself
+   * from storage on connect, that read all but always succeeds, and it landed in the
+   * same tick as a failed write — so a quota failure was recorded and erased before
+   * anything could show it. `total` proved the failure had happened while `failed`
+   * said everything was fine. A read succeeding says nothing about writes.
+   */
+  const okStorage = useCallback((op: NonNullable<StorageHealth['op']>) => {
+    setStorage((prev) => (prev.op === op ? { ...prev, failed: 0, lastError: null, op: null } : prev))
+  }, [])
 
   // `loadOlder` reads the newest rows without being re-created on every batch,
   // so the ref is mirrored in an effect rather than written during render.
@@ -103,14 +152,18 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
         setRows((prev) => merge(prev, first))
         setHasMore(first.length === PAGE)
         setTotal(await countTraces())
-      } catch {
-        /* IDB unavailable — live merges below still populate the view */
+        okStorage('read')
+      } catch (e) {
+        // Live merges below still populate the view, so the console stays usable —
+        // but an empty table now means "could not read", not "nothing retained",
+        // and the screen has to say which.
+        if (!cancelled) failStorage('read', e)
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [persist])
+  }, [persist, failStorage, okStorage])
 
   // Live mode: persist + merge each incoming batch. Persistence is best-effort;
   // the incoming batch is always merged into the view even if IDB write fails.
@@ -129,27 +182,42 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
         await pruneTraces()
         if (overtaken()) return
         setTotal(await countTraces())
-      } catch {
-        /* IDB write failed — fall back to in-memory only */
+        okStorage('write')
+      } catch (e) {
+        // The batch is still merged into the view below, so live traffic keeps
+        // showing — but those rows were not persisted and the count did not move.
+        // Both are visible on screen, so both have to be qualified.
+        // `pruneTraces` counts here too: retention that silently stops being
+        // enforced is how a quota failure arrives in the first place.
+        if (!overtaken()) failStorage('write', e)
       }
       if (!overtaken()) setRows((prev) => merge(prev, batch))
     })()
     return () => {
       cancelled = true
     }
-  }, [persist, liveTraces])
+  }, [persist, liveTraces, failStorage, okStorage])
 
   const loadOlder = useCallback(() => {
     setLoadingOlder(true)
     void (async () => {
-      const current = rowsRef.current
-      const oldest = current[current.length - 1]
-      const page = await getTracePage(PAGE, oldest?.epochMillis)
-      setRows((prev) => merge(prev, page))
-      setHasMore(page.length === PAGE)
-      setLoadingOlder(false)
+      try {
+        const current = rowsRef.current
+        const oldest = current[current.length - 1]
+        const page = await getTracePage(PAGE, oldest?.epochMillis)
+        setRows((prev) => merge(prev, page))
+        setHasMore(page.length === PAGE)
+        okStorage('read')
+      } catch (e) {
+        // Without this the rejection escaped unhandled and `setLoadingOlder(false)`
+        // never ran — the spinner turned forever. A stuck control is worse than a
+        // silent one: it says work is in progress that has already failed.
+        failStorage('read', e)
+      } finally {
+        setLoadingOlder(false)
+      }
     })()
-  }, [])
+  }, [failStorage, okStorage])
 
   // Wipe the retained history and the display window, and record how far the wipe
   // reached so a later batch — or a platform replaying its ring buffer on the next
@@ -166,14 +234,20 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
     void (async () => {
       try {
         await clearTraces()
-      } catch {
-        /* IDB unavailable — still clear the in-memory view */
+      } catch (e) {
+        // 🔴 The view is NOT emptied when the delete fails. Emptying it would report
+        // a deletion that did not happen: the rows are still in storage and come
+        // back on the next reload — the same resurrection #48 fixed, arriving by a
+        // different route. A clear that failed has to look like a clear that failed.
+        failStorage('clear', e)
+        return
       }
+      okStorage('clear')
       setRows([])
       setTotal(0)
       setHasMore(false)
     })()
-  }, [])
+  }, [failStorage, okStorage])
 
   // Sample mode has nothing persisted to wipe, so "clear" records which batch
   // was dismissed. Storing the input alongside the decision keeps the view
@@ -189,8 +263,9 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
       loadingOlder: false,
       loadOlder: noop,
       clear: clearSample,
+      storage: STORAGE_OK, // sample mode never touches storage
     }
   }
 
-  return { rows, total, hasMore, loadingOlder, loadOlder, clear }
+  return { rows, total, hasMore, loadingOlder, loadOlder, clear, storage }
 }
