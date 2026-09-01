@@ -46,9 +46,13 @@ export function SettingsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        {/* Mounted only while open, so reopening shows what is stored rather than
-            what was abandoned last time — no effect needed to reset the draft. */}
-        {open && <SettingsForm settings={settings} onSave={onSave} onDone={() => onOpenChange(false)} />}
+        {/* The form holds the draft in mount-scoped state, so reopening shows what is
+            stored rather than what was abandoned last time — no effect resetting it.
+            The unmount comes from `DialogContent`'s portal, which renders nothing
+            while closed (measured: an `{open && …}` guard here changed no test and
+            no rendered output, so it is not carried). What guarantees the reset is
+            the behaviour pinned in settings-dialog.test.tsx, not this line. */}
+        <SettingsForm settings={settings} onSave={onSave} onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   )
