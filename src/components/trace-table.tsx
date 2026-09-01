@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Inbox, SearchX, Trash2 } from 'lucide-react'
+import { AlertTriangle, Inbox, SearchX, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
@@ -32,7 +32,14 @@ function shortId(id: string | null): string {
   return id ? `${id.slice(0, 8)}…` : '—'
 }
 
-export function TraceTable({ store }: { store: TraceStoreView }) {
+export function TraceTable({
+  store,
+  staleReason,
+}: {
+  store: TraceStoreView
+  /** Set when the trace channel has gone unreadable; shown in the header, never over the rows. */
+  staleReason?: string | null
+}) {
   const { rows: allRows, total, hasMore, loadingOlder, loadOlder, clear } = store
   const [chip, setChip] = useState<ChipKey>('all')
   const [q, setQ] = useState('')
@@ -81,6 +88,12 @@ export function TraceTable({ store }: { store: TraceStoreView }) {
 
   return (
     <div className="flex flex-col gap-3">
+      {staleReason && (
+        <p className="flex items-start gap-1.5 font-mono text-[11px] leading-relaxed text-warn">
+          <AlertTriangle className="mt-[1px] size-3 shrink-0" aria-hidden />
+          {staleReason}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2.5">
         <h2 className="text-sm font-semibold">Recent traces</h2>
         <span className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">

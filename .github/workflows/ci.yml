@@ -1,8 +1,9 @@
 # GitHub Actions CI — the same local gate contributors run (CONTRIBUTING.md):
-# lint then build. `build` runs only after `lint` passes. This is a client-only
-# SPA, so there is no publish step. Runs on every PR and push to main (no path
-# filter) so the branch-protection required checks `lint` / `build` always report
-# — otherwise a doc-only PR would never get a status and could not be merged.
+# lint, then build and test. Both run only after `lint` passes, and in parallel
+# with each other. This is a client-only SPA, so there is no publish step. Runs on
+# every PR and push to main (no path filter) so the branch-protection required
+# check always reports — otherwise a doc-only PR would never get a status and
+# could not be merged.
 
 name: CI
 
@@ -46,21 +47,38 @@ jobs:
       - name: build
         run: npm run build
 
-  # Aggregate gate. Branch protection requires THIS job rather than `lint`/`build`
-  # individually, so the job graph can change without editing protection — and a
-  # renamed job can no longer leave a required check that never reports.
+  # Scenario tests: the stream hook + trace store + a real IndexedDB driven through
+  # sequences a user can perform. Gated on lint, parallel with build.
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: install
+        run: npm ci
+      - name: test
+        run: npm test
+
+  # Aggregate gate. Branch protection requires THIS job rather than the individual
+  # jobs, so the job graph can change without editing protection — and a renamed
+  # job can no longer leave a required check that never reports.
   #
   # `if: always()` makes it run even when an upstream job fails or is skipped, and
   # the step then asserts each result explicitly: `success()` alone would let a
   # skipped or cancelled upstream job pass as green.
   ci-complete:
     if: always()
-    needs: [lint, build]
+    needs: [lint, build, test]
     runs-on: ubuntu-latest
     steps:
       - name: assert upstream jobs succeeded
         run: |
-          echo "lint=${{ needs.lint.result }} build=${{ needs.build.result }}"
-          for r in "${{ needs.lint.result }}" "${{ needs.build.result }}"; do
+          echo "lint=${{ needs.lint.result }} build=${{ needs.build.result }} test=${{ needs.test.result }}"
+          for r in "${{ needs.lint.result }}" "${{ needs.build.result }}" "${{ needs.test.result }}"; do
             [ "$r" = "success" ] || exit 1
           done

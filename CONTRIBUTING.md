@@ -79,6 +79,7 @@ Run the full local gate — these must pass:
 ```bash
 npm run lint      # oxlint
 npm run build     # tsc -b && vite build (type-check + production build)
+npm test          # vitest — scenario tests (see src/test/)
 ```
 
 If your change has a runtime effect, also verify it in the app (`npm run dev`)

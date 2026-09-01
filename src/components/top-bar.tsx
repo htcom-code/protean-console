@@ -4,7 +4,7 @@ import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { ConnState } from '@/hooks/use-console-data'
+import { platformOrigin, type ChannelStates, type ConnState } from '@/hooks/use-console-data'
 
 type Tone = 'ok' | 'warn' | 'crit'
 type StatusView = { label: string; tone: Tone; ping: boolean; title: string; Icon?: ComponentType<{ className?: string }> }
@@ -33,6 +33,14 @@ function statusView(conn: ConnState): StatusView {
           Icon: ServerCrash,
         }
       return { label: 'DISCONNECTED', tone: 'crit', ping: false, title: 'platform unreachable — reconnecting', Icon: WifiOff }
+    case 'unreadable':
+      return {
+        label: 'UNREADABLE',
+        tone: 'crit',
+        ping: false,
+        title: 'the platform is connected and sending, but nothing it sends can be read',
+        Icon: ShieldAlert,
+      }
     case 'paused':
       return { label: 'PAUSED', tone: 'warn', ping: false, title: 'stream disconnected — showing last data', Icon: Pause }
     default:
@@ -53,17 +61,24 @@ export function TopBar({
   theme,
   onToggleTheme,
   conn,
+  channels,
 }: {
   streaming: boolean
   onToggleStream: () => void
   theme: 'light' | 'dark'
   onToggleTheme: () => void
   conn: ConnState
+  channels: ChannelStates
 }) {
   const s = statusView(conn)
+  // Frames the platform sent that we could not read. Counted for the whole session,
+  // not just the current run of them: a burst that recovered still happened, and a
+  // number that resets itself is a number nobody can act on.
+  const badFrames = Object.values(channels).reduce((n, c) => n + c.total, 0)
+  const staleChannels = (Object.keys(channels) as Array<keyof ChannelStates>).filter((k) => channels[k].stale)
   return (
     <header className="flex flex-wrap items-center gap-3.5">
-      <BrandLockup />
+      <BrandLockup subtitle={platformOrigin()} />
 
       <span
         className={cn(
@@ -81,6 +96,23 @@ export function TopBar({
         )}
         {s.label}
       </span>
+
+      {badFrames > 0 && (
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[11px]',
+            staleChannels.length > 0 ? TONE_BADGE.crit : TONE_BADGE.warn,
+          )}
+          title={
+            staleChannels.length > 0
+              ? `${staleChannels.join(', ')} — showing the last data the platform sent correctly`
+              : 'the platform sent frames this console could not read; it has since recovered'
+          }
+        >
+          <ShieldAlert className="size-3" aria-hidden />
+          {badFrames} bad {badFrames === 1 ? 'frame' : 'frames'}
+        </span>
+      )}
 
       <TooltipProvider delay={300}>
         <div className="ml-auto flex items-center gap-2.5">

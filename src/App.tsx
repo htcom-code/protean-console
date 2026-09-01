@@ -10,6 +10,7 @@ import { TraceTable } from '@/components/trace-table'
 import { LoginScreen } from '@/components/login-screen'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useConsoleData } from '@/hooks/use-console-data'
+import { StalePanel, staleReason } from '@/components/stale-panel'
 import { useTraceStore } from '@/hooks/use-trace-store'
 import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/hooks/use-auth'
@@ -29,12 +30,22 @@ export default function App() {
   const [sort, setSort] = usePersistentState<MetricSort>('pc:metricsSort', DEFAULT_SORT)
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
-  const { data, conn, streaming, setStreaming, resetTraces } = useConsoleData()
+  const { data, conn, channels, streaming, setStreaming } = useConsoleData()
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
-  const persist = conn.status === 'live' || conn.status === 'disconnected' || conn.status === 'paused'
-  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist, resetTraces)
+  const persist =
+    conn.status === 'live' ||
+    conn.status === 'disconnected' ||
+    conn.status === 'unreadable' ||
+    conn.status === 'paused'
+  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist)
+
+  // Each panel is dimmed by the channel that feeds it, not by the connection as a
+  // whole: one unreadable channel must not cast doubt on data that arrived fine.
+  const staleKpi = staleReason(channels, ['summary', 'metrics'])
+  const staleTraceDerived = staleReason(channels, ['trace'])
+  const staleModules = staleReason(channels, ['modules', 'metrics'])
 
   const selected = useMemo(() => {
     if (!selectedModuleId || !data) return null
@@ -54,6 +65,7 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggle}
         conn={conn}
+        channels={channels}
       />
 
       {disconnected && <ConnectionBanner conn={conn} />}
@@ -65,23 +77,33 @@ export default function App() {
           className={cn('mt-6 flex flex-col gap-6', disconnected && 'opacity-60 transition-opacity')}
           aria-busy={disconnected}
         >
-          <KpiRow metrics={data.metrics} summary={data.summary} />
+          <StalePanel reason={staleKpi}>
+            <KpiRow metrics={data.metrics} summary={data.summary} />
+          </StalePanel>
 
           <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.9fr_1fr]">
-            <LatencyChart series={data.latencyP95} />
-            <StatusMix traces={data.traces} />
+            <StalePanel reason={staleTraceDerived}>
+              <LatencyChart series={data.latencyP95} />
+            </StalePanel>
+            <StalePanel reason={staleTraceDerived}>
+              <StatusMix traces={data.traces} />
+            </StalePanel>
           </div>
 
-          <ModuleTable
-            metrics={data.metrics}
-            modules={data.modules}
-            sort={sort}
-            onSort={setSort}
-            selectedId={selectedModuleId}
-            onSelect={setSelectedModuleId}
-          />
+          <StalePanel reason={staleModules}>
+            <ModuleTable
+              metrics={data.metrics}
+              modules={data.modules}
+              sort={sort}
+              onSort={setSort}
+              selectedId={selectedModuleId}
+              onSelect={setSelectedModuleId}
+            />
+          </StalePanel>
 
-          <TraceTable store={traceStore} />
+          {/* The trace table itself is left legible — dimming rows the operator is
+              reading to find something is a poor trade. The note sits in its header. */}
+          <TraceTable store={traceStore} staleReason={staleTraceDerived} />
 
           <footer className="font-mono text-[11px] leading-relaxed text-muted-foreground">
             Columns map 1:1 to the platform trace surface — rows are{' '}

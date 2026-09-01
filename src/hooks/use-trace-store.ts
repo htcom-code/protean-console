@@ -41,11 +41,7 @@ export interface TraceStoreView {
  * retained history, and older pages load on demand. When false (cold-start
  * sample data) it passes the given traces straight through without touching IDB.
  */
-export function useTraceStore(
-  liveTraces: RequestTrace[],
-  persist: boolean,
-  resetLive?: () => void,
-): TraceStoreView {
+export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): TraceStoreView {
   const [rows, setRows] = useState<StoredTrace[]>([])
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
@@ -59,11 +55,26 @@ export function useTraceStore(
     rowsRef.current = rows
   }, [rows])
 
-  // Keys wiped by a clear. Every batch re-persists the whole live window, and a
-  // platform may replay traces it already sent (a ring-buffer dump on reconnect),
-  // so a cleared row has two ways back in. Filtering on the way to IDB closes
-  // both. Holds only keys this session actually cleared.
-  const clearedKeysRef = useRef<Set<string>>(new Set())
+  // Newest `epochMillis` a clear wiped, or 0 before the first clear. Every batch
+  // re-persists the whole live window, and a platform replays what it already
+  // sent (both platforms dump their ring buffer on connect), so a cleared row has
+  // two ways back in. One watermark closes both: everything the clear removed is
+  // at or below it, everything that happens afterwards is above it. Keeping the
+  // keys instead would grow without bound — `rowsRef` pages in 200 rows at a time
+  // up to TRACE_RETENTION, and a clear would absorb every one of them.
+  //
+  // This reads the platform's own clock on both sides of the comparison, never the
+  // browser's, so the two never have to agree. It does assume that clock moves
+  // forward, which the store already assumes: `epochMillis` is its sort index and
+  // its paging cursor.
+  const clearedBeforeRef = useRef(0)
+
+  // Bumped by every clear. A batch's write to IDB is async, so a clear can land
+  // while one is in flight; the batch has already been upserted by then and the
+  // clear wipes it, but the continuation would still repaint the emptied view with
+  // rows that no longer exist in the store. Comparing the generation it started in
+  // lets that continuation notice it was overtaken.
+  const clearGenRef = useRef(0)
 
   // Read inside `clear`, which must not be re-created on every batch.
   const liveTracesRef = useRef(liveTraces)
@@ -105,23 +116,23 @@ export function useTraceStore(
   // the incoming batch is always merged into the view even if IDB write fails.
   useEffect(() => {
     if (!persist || liveTraces.length === 0) return
-    const fresh =
-      clearedKeysRef.current.size === 0
-        ? liveTraces
-        : liveTraces.filter((t) => !clearedKeysRef.current.has(traceKey(t)))
+    const cutoff = clearedBeforeRef.current
+    const fresh = cutoff === 0 ? liveTraces : liveTraces.filter((t) => t.epochMillis > cutoff)
     if (fresh.length === 0) return
     let cancelled = false
+    const gen = clearGenRef.current
+    const overtaken = () => cancelled || gen !== clearGenRef.current
     const batch = fresh.map(withKey)
     void (async () => {
       try {
         await upsertTraces(fresh)
         await pruneTraces()
-        if (cancelled) return
+        if (overtaken()) return
         setTotal(await countTraces())
       } catch {
         /* IDB write failed — fall back to in-memory only */
       }
-      if (!cancelled) setRows((prev) => merge(prev, batch))
+      if (!overtaken()) setRows((prev) => merge(prev, batch))
     })()
     return () => {
       cancelled = true
@@ -140,13 +151,18 @@ export function useTraceStore(
     })()
   }, [])
 
-  // Wipe everything the user can see as history: IndexedDB, the display window,
-  // and the caller's live trace window. Remember the keys so a later batch — or a
-  // platform replaying its ring buffer — cannot write them back.
+  // Wipe the retained history and the display window, and record how far the wipe
+  // reached so a later batch — or a platform replaying its ring buffer on the next
+  // connect — cannot write any of it back.
   const clear = useCallback(() => {
-    for (const t of liveTracesRef.current) clearedKeysRef.current.add(traceKey(t))
-    for (const r of rowsRef.current) clearedKeysRef.current.add(r._key)
-    resetLive?.()
+    // Mark the newest thing being wiped. The view holds the newest rows IDB has and
+    // the live window the newest the platform sent, so the larger of the two is the
+    // high-water mark of everything this clear removes.
+    let mark = clearedBeforeRef.current
+    for (const t of liveTracesRef.current) if (t.epochMillis > mark) mark = t.epochMillis
+    for (const r of rowsRef.current) if (r.epochMillis > mark) mark = r.epochMillis
+    clearedBeforeRef.current = mark
+    clearGenRef.current += 1
     void (async () => {
       try {
         await clearTraces()
@@ -157,7 +173,7 @@ export function useTraceStore(
       setTotal(0)
       setHasMore(false)
     })()
-  }, [resetLive])
+  }, [])
 
   // Sample mode has nothing persisted to wipe, so "clear" records which batch
   // was dismissed. Storing the input alongside the decision keeps the view
