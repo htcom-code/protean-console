@@ -196,6 +196,29 @@ describe('a store that has physically run out of room', () => {
     expect(await countTraces()).toBeGreaterThan(0)
   })
 
+  it('does not overstate what is still retained after a failed batch', async () => {
+    // 🔴 The retained count used to move only on success. But the retry evicts before
+    // it writes, so a batch that ends in failure has still deleted rows — and the
+    // header kept reporting the last successful number. Measured in a browser: it read
+    // 49,985 while the store held 48,212, and overstated further with every batch.
+    // The note said rows were not being saved; the number beside it said the rest were
+    // still there.
+    quota = installQuota(ONE_RECORD * 30)
+    await seedHistory(20)
+    const { result } = await connected()
+    await waitFor(async () => expect(await countTraces()).toBe(20 + ON_CONNECT))
+
+    // Shrink the budget so the window can no longer fit: every batch now evicts and
+    // then fails, which is exactly the state that produced the wrong number.
+    quota.resize(ONE_RECORD * 6)
+    for (let n = 1; n <= 4; n++) await arrive(n)
+
+    await waitFor(() => expect(result.current.store.storage.failed).toBeGreaterThan(0))
+    const stored = await countTraces()
+    expect(stored).toBeLessThan(20 + ON_CONNECT) // eviction really did burn history
+    await waitFor(() => expect(result.current.store.total).toBe(stored))
+  })
+
   it('leaves nothing behind from the refused transaction', async () => {
     // A partially-applied batch would be worse than a refused one: the count would
     // move, the console would report success, and the store would hold a fragment

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearTraces,
   countTraces,
+  findTraces,
   getTracePage,
   pruneOldest,
   traceKey,
@@ -9,6 +10,7 @@ import {
   type StoredTrace,
 } from '@/lib/trace-db'
 import { evictionCount, type Settings } from '@/lib/settings'
+import { isFiltering, matchesFilter, NO_FILTER, type TraceFilter } from '@/lib/trace-filter'
 import type { RequestTrace } from '@/lib/types'
 
 const NO_ROWS: StoredTrace[] = []
@@ -16,6 +18,11 @@ const noop = () => {}
 
 function withKey(t: RequestTrace): StoredTrace {
   return { ...t, _key: traceKey(t) }
+}
+
+/** Two filters ask the same question. */
+function sameFilter(a: TraceFilter, b: TraceFilter): boolean {
+  return a.chip === b.chip && a.query.trim() === b.query.trim()
 }
 
 /** Merge rows newest-first, deduped by `_key` (later wins on collision). */
@@ -56,6 +63,11 @@ export interface TraceStoreView {
   loadOlder: () => void
   clear: () => void
   storage: StorageHealth
+  /** What the view is filtered to. Owned here because a filter is a query on storage. */
+  filter: TraceFilter
+  setFilter: (f: TraceFilter) => void
+  /** True while the filter is being answered from storage — one state, not a flicker. */
+  searching: boolean
 }
 
 /**
@@ -76,6 +88,14 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [dismissedSample, setDismissedSample] = useState<RequestTrace[] | null>(null)
   const [storage, setStorage] = useState<StorageHealth>(STORAGE_OK)
+  const [filter, setFilter] = useState<TraceFilter>(NO_FILTER)
+  // The search result is stored together with the filter it answers, so the view is
+  // derived during render instead of being reset from an effect — the same rule the
+  // module detail panel follows, and for the same reason: a reset-by-effect showed the
+  // previous filter's rows for one frame after the filter changed.
+  const [result, setResult] = useState<{ filter: TraceFilter; rows: StoredTrace[]; complete: boolean } | null>(null)
+  // Bumped by every filter change so a slower earlier scan cannot land after a newer one.
+  const searchGenRef = useRef(0)
 
   /**
    * A storage failure is reported on the first occurrence, unlike a malformed
@@ -225,11 +245,31 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
         okStorage('write')
       } catch (e) {
         // The batch is still merged into the view below, so live traffic keeps
-        // showing — but those rows were not persisted and the count did not move.
-        // Both are visible on screen, so both have to be qualified.
+        // showing — but those rows were not persisted, which is visible on screen and
+        // so has to be qualified.
         // Eviction counts here too: retention that silently stops being enforced is
         // how a quota failure arrives in the first place.
-        if (!overtaken()) failStorage('write', e)
+        if (overtaken()) return
+        failStorage('write', e)
+        // 🔴 And the retained count is re-read on the way out.
+        //
+        // It used to move only on success, which quietly made it a lie in the one
+        // situation that matters: the retry evicts *before* it writes, so a batch that
+        // ends in failure still deleted rows. Measured in the browser under a refused
+        // write — the header said 49,985 retained while the store held 48,212, and it
+        // overstated by more with every batch. The note said rows were not being
+        // saved; the number beside it claimed they were still there.
+        //
+        // Best-effort, and deliberately not reported: this read can fail too, and a
+        // read failure here would overwrite the write failure the operator needs to
+        // see (the storage mark is scoped to one op). A stale count is a smaller
+        // wrong than the wrong error.
+        try {
+          const total = await countTraces()
+          if (!overtaken()) setTotal(total)
+        } catch {
+          /* leave the count where it was; the write failure is the message that matters */
+        }
       }
       if (!overtaken()) setRows((prev) => merge(prev, batch))
     })()
@@ -238,13 +278,76 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
     }
   }, [persist, liveTraces, failStorage, okStorage])
 
+  // Answer the filter from storage whenever it changes.
+  //
+  // 🔴 One scan, one loading state. The old path filtered the loaded page and let
+  // infinite scroll widen it, which fired a page read per turn of the loop — measured
+  // at 189 reads in three seconds on a 47,320-row store, with the control blinking
+  // between "Load older" and "loading…" the whole time. Worse, it made the operator
+  // press a button until matches appeared. A filter is a question about the whole
+  // history, so it is asked once.
+  //
+  // Debounced because the free-text field changes per keystroke and each scan can walk
+  // the entire store. 200ms is below the threshold where typing feels laggy and above
+  // the interval between keystrokes.
+  const filtering = isFiltering(filter)
+  // Derived, not synced: a result belongs to one filter, so "still searching" is simply
+  // "filtering, and no result for *this* filter yet". That covers the debounce window,
+  // an in-flight scan, and a filter changed mid-scan, with no state to reset.
+  const answered = result && sameFilter(result.filter, filter) ? result : null
+  const matches = answered?.rows ?? NO_ROWS
+  const moreMatches = answered ? !answered.complete : false
+  const searching = filtering && answered === null
+
+  useEffect(() => {
+    if (!persist || !filtering) return
+    const gen = ++searchGenRef.current
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const found = await findTraces(filter, settingsRef.current.pageSize)
+          if (gen !== searchGenRef.current) return
+          setResult({ filter, rows: found.rows, complete: found.complete })
+          okStorage('read')
+        } catch (e) {
+          if (gen === searchGenRef.current) failStorage('read', e)
+        }
+      })()
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [persist, filtering, filter, failStorage, okStorage])
+
+  // `loadOlder` reads the current view's oldest row without being re-created on every
+  // batch, so the filtered branch reads its tail from a ref too.
+  const filterRef = useRef(filter)
+  useEffect(() => {
+    filterRef.current = filter
+  }, [filter])
+
+  const matchesRef = useRef(matches)
+  useEffect(() => {
+    matchesRef.current = matches
+  }, [matches])
+
   const loadOlder = useCallback(() => {
     setLoadingOlder(true)
     void (async () => {
       try {
+        const size = settingsRef.current.pageSize
+        if (isFiltering(filterRef.current)) {
+          // More matches than one page: continue the same scan from its oldest match.
+          const tail = matchesRef.current[matchesRef.current.length - 1]
+          const found = await findTraces(filterRef.current, size, tail?.epochMillis)
+          setResult((prev) =>
+            prev && sameFilter(prev.filter, filterRef.current)
+              ? { ...prev, rows: merge(prev.rows, found.rows), complete: found.complete }
+              : prev,
+          )
+          okStorage('read')
+          return
+        }
         const current = rowsRef.current
         const oldest = current[current.length - 1]
-        const size = settingsRef.current.pageSize
         const page = await getTracePage(size, oldest?.epochMillis)
         setRows((prev) => merge(prev, page))
         setHasMore(page.length === size)
@@ -296,17 +399,39 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
   const clearSample = useCallback(() => setDismissedSample(liveTraces), [liveTraces])
 
   if (!persist) {
-    const shown = dismissedSample === liveTraces ? NO_ROWS : sampleRows
+    // Sample mode has no storage to query, so the filter is applied to what it has.
+    const all = dismissedSample === liveTraces ? NO_ROWS : sampleRows
+    const shown = filtering ? all.filter((t) => matchesFilter(t, filter)) : all
     return {
       rows: shown,
-      total: shown.length,
+      total: all.length,
       hasMore: false,
       loadingOlder: false,
       loadOlder: noop,
       clear: clearSample,
       storage: STORAGE_OK, // sample mode never touches storage
+      filter,
+      setFilter,
+      searching: false,
     }
   }
 
-  return { rows, total, hasMore, loadingOlder, loadOlder, clear, storage }
+  // With a filter on, the view is the storage scan plus anything matching that has
+  // arrived since — a new error has to appear while "Errors only" is up, and the scan
+  // that answered the filter cannot know about traces that did not exist yet.
+  const view = filtering ? merge(matches, rows.filter((t) => matchesFilter(t, filter))) : rows
+
+  return {
+    rows: view,
+    total,
+    // Under a filter, "more" means more matches to find, not more rows to page.
+    hasMore: filtering ? moreMatches : hasMore,
+    loadingOlder,
+    loadOlder,
+    clear,
+    storage,
+    filter,
+    setFilter,
+    searching,
+  }
 }

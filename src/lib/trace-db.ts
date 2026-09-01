@@ -1,4 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { matchesFilter, type TraceFilter } from '@/lib/trace-filter'
 import type { RequestTrace } from '@/lib/types'
 
 // Client-side trace history. The server keeps only a small ring buffer (~200),
@@ -82,6 +83,46 @@ export async function upsertTraces(traces: RequestTrace[]): Promise<void> {
   observeAbort(tx)
   await Promise.all(traces.map((t) => tx.store.put({ ...t, _key: traceKey(t) })))
   await tx.done
+}
+
+/** Matches for a filter, and whether the search reached the end of the history. */
+export interface TraceMatches {
+  rows: StoredTrace[]
+  /** True when the scan walked past the oldest retained trace — there is no more to find. */
+  complete: boolean
+}
+
+/**
+ * Search the whole retained history for a filter, newest-first.
+ *
+ * 🔴 A filter is a query over everything kept, not over whatever happens to be loaded.
+ * The table used to filter the in-memory page and lean on infinite scroll to widen it,
+ * which made the *user* responsible for paging until matches appeared — and made the
+ * panel say "No traces match" when the matches were simply further back. Measured on a
+ * 47,320-row store: two 404s sat 4,381 rows down, 22 pages past what was loaded.
+ *
+ * One cursor, one transaction, stopping as soon as `limit` matches are collected. Where
+ * matches are rare the cursor walks the whole store, which is the cost of answering the
+ * question honestly — and it is one read, not one per page.
+ *
+ * `beforeEpoch` continues an earlier search from its oldest match.
+ */
+export async function findTraces(filter: TraceFilter, limit: number, beforeEpoch?: number): Promise<TraceMatches> {
+  const database = await db()
+  const range = beforeEpoch != null ? IDBKeyRange.upperBound(beforeEpoch, true) : undefined
+  const rows: StoredTrace[] = []
+  let cursor = await database.transaction(STORE).store.index(BY_EPOCH).openCursor(range, 'prev')
+  while (cursor) {
+    if (matchesFilter(cursor.value, filter)) {
+      rows.push(cursor.value)
+      if (rows.length >= limit) {
+        // Stopped early: rows older than the last match are unexamined.
+        return { rows, complete: false }
+      }
+    }
+    cursor = await cursor.continue()
+  }
+  return { rows, complete: true }
 }
 
 /**
