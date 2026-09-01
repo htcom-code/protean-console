@@ -5,6 +5,28 @@ import { traceKey } from '@/lib/trace-db'
 import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, TraceSummary } from '@/lib/types'
 
 const STREAM_URL = '/platform/traces/stream'
+
+/**
+ * The address of the platform this console is connected to, for display.
+ *
+ * Requests are relative, so they go to whatever origin served the console. In
+ * development that origin is the Vite dev server, which forwards `/platform` to
+ * `VITE_PROTEAN_TARGET` — the platform's real address, and the one worth showing,
+ * since the dev server's own address is already in the browser's address bar.
+ *
+ * That target is only consulted in development. The proxy is a dev-server feature
+ * that `vite build` does not carry, so a production bundle sends every request to
+ * its own origin no matter what the variable said at build time. Printing the
+ * variable there would name an address no request ever goes to.
+ */
+export function platformOrigin(): string {
+  const configured = import.meta.env.DEV ? (import.meta.env.VITE_PROTEAN_TARGET as string | undefined) : undefined
+  // Trimmed and checked for emptiness rather than nullishness: an exported-but-empty
+  // variable is how a shell says "unset", and `??` would take it as an address and
+  // leave the console naming nothing at all.
+  const configuredTarget = configured?.trim()
+  return (configuredTarget || window.location.origin).replace(/\/$/, '')
+}
 // Rolling window of recent traces kept in memory for the chart / status mix.
 // Full history lives in IndexedDB (useTraceStore); this is just the live view.
 const TRACE_WINDOW = 500

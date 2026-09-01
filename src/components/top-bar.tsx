@@ -4,7 +4,7 @@ import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { ChannelStates, ConnState } from '@/hooks/use-console-data'
+import { platformOrigin, type ChannelStates, type ConnState } from '@/hooks/use-console-data'
 
 type Tone = 'ok' | 'warn' | 'crit'
 type StatusView = { label: string; tone: Tone; ping: boolean; title: string; Icon?: ComponentType<{ className?: string }> }
@@ -78,7 +78,7 @@ export function TopBar({
   const staleChannels = (Object.keys(channels) as Array<keyof ChannelStates>).filter((k) => channels[k].stale)
   return (
     <header className="flex flex-wrap items-center gap-3.5">
-      <BrandLockup />
+      <BrandLockup subtitle={platformOrigin()} />
 
       <span
         className={cn(
