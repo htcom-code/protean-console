@@ -1,8 +1,17 @@
-import { Database, Moon, Pause, Play, ServerCrash, ShieldAlert, Sun, WifiOff } from 'lucide-react'
-import type { ComponentType } from 'react'
+import { Database, Moon, Pause, Play, ServerCrash, Settings2, ShieldAlert, Sliders, Sun, WifiOff } from 'lucide-react'
+import { useState, type ComponentType } from 'react'
 import { BrandLockup } from '@/components/brand-lockup'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { SettingsDialog } from '@/components/settings-dialog'
+import type { Settings } from '@/lib/settings'
 import { cn } from '@/lib/utils'
 import { platformOrigin, type ChannelStates, type ConnState } from '@/hooks/use-console-data'
 import type { StorageHealth } from '@/hooks/use-trace-store'
@@ -64,6 +73,8 @@ export function TopBar({
   conn,
   channels,
   storage,
+  settings,
+  onSaveSettings,
 }: {
   streaming: boolean
   onToggleStream: () => void
@@ -72,7 +83,10 @@ export function TopBar({
   conn: ConnState
   channels: ChannelStates
   storage: StorageHealth
+  settings: Settings
+  onSaveSettings: (next: Settings) => void
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const s = statusView(conn)
   // Frames the platform sent that we could not read. Counted for the whole session,
   // not just the current run of them: a burst that recovered still happened, and a
@@ -157,24 +171,32 @@ export function TopBar({
             <TooltipContent>{streaming ? 'Disconnect the live stream' : 'Connect the live stream'}</TooltipContent>
           </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger
+          {/* One options button in the slot the theme toggle used to own. Theme stays
+              a one-click item inside it, so the shortcut is not lost. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
               render={
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="size-9"
-                  onClick={onToggleTheme}
-                  aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-                >
-                  {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                <Button variant="outline" size="icon" className="size-9" aria-label="Options">
+                  <Settings2 className="size-4" />
                 </Button>
               }
             />
-            <TooltipContent>{theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}</TooltipContent>
-          </Tooltip>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={onToggleTheme}>
+                {theme === 'dark' ? <Sun aria-hidden /> : <Moon aria-hidden />}
+                Theme
+                <DropdownMenuShortcut className="font-mono">{theme}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+                <Sliders aria-hidden />
+                Settings
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </TooltipProvider>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings} onSave={onSaveSettings} />
     </header>
   )
 }

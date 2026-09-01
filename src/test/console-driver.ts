@@ -1,6 +1,7 @@
 import { useConsoleData } from '@/hooks/use-console-data'
 import { useTraceStore } from '@/hooks/use-trace-store'
 import type { RequestTrace } from '@/lib/types'
+import { DEFAULT_SETTINGS, type Settings } from '@/lib/settings'
 
 const NO_TRACES: RequestTrace[] = []
 
@@ -13,9 +14,9 @@ const NO_TRACES: RequestTrace[] = []
  *
  * Keep in step with `App.tsx`: if the composition there changes, this changes.
  */
-export function useConsoleUnderTest() {
-  const { data, conn, streaming, setStreaming } = useConsoleData()
+export function useConsoleUnderTest(settings: Settings = DEFAULT_SETTINGS) {
+  const { data, conn, streaming, setStreaming } = useConsoleData(settings)
   const persist = conn.status === 'live' || conn.status === 'disconnected' || conn.status === 'paused'
-  const store = useTraceStore(data?.traces ?? NO_TRACES, persist)
+  const store = useTraceStore(data?.traces ?? NO_TRACES, persist, settings)
   return { data, conn, store, streaming, setStreaming }
 }

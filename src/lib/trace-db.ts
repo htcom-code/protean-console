@@ -16,7 +16,11 @@ const DB_VERSION = 1
 const STORE = 'traces'
 const BY_EPOCH = 'byEpoch'
 
-/** Cap on retained rows; oldest beyond this are pruned. */
+/**
+ * Default cap on retained rows. The effective limit is a user setting
+ * (`settings.ts`), which cannot go below this; this constant is its floor and the
+ * fallback for callers that do not carry settings.
+ */
 export const TRACE_RETENTION = 50_000
 
 export type StoredTrace = RequestTrace & { _key: string }
@@ -86,6 +90,31 @@ export async function countTraces(): Promise<number> {
 /** Drop all retained rows. */
 export async function clearTraces(): Promise<void> {
   await (await db()).clear(STORE)
+}
+
+/**
+ * Drop the oldest rows once the store is over its limit.
+ *
+ * `count` is how many to remove; the caller decides that from the limit, the size
+ * of the batch that arrived and the user's eviction factor (`evictionCount` in
+ * `settings.ts`). Passing it in rather than recomputing here keeps the policy in
+ * one place and lets this stay a mechanism.
+ */
+export async function pruneOldest(count: number): Promise<number> {
+  if (count <= 0) return 0
+  const database = await db()
+  const tx = database.transaction(STORE, 'readwrite')
+  let cursor = await tx.store.index(BY_EPOCH).openCursor(null, 'next') // oldest first
+  let deleted = 0
+  let toDelete = count
+  while (cursor && toDelete > 0) {
+    await cursor.delete()
+    deleted += 1
+    toDelete -= 1
+    cursor = await cursor.continue()
+  }
+  await tx.done
+  return deleted
 }
 
 /** Drop oldest rows beyond `max` (default retention cap). */

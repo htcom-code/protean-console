@@ -3,14 +3,14 @@ import {
   clearTraces,
   countTraces,
   getTracePage,
-  pruneTraces,
+  pruneOldest,
   traceKey,
   upsertTraces,
   type StoredTrace,
 } from '@/lib/trace-db'
+import { evictionCount, type Settings } from '@/lib/settings'
 import type { RequestTrace } from '@/lib/types'
 
-const PAGE = 200
 const NO_ROWS: StoredTrace[] = []
 const noop = () => {}
 
@@ -64,7 +64,12 @@ export interface TraceStoreView {
  * retained history, and older pages load on demand. When false (cold-start
  * sample data) it passes the given traces straight through without touching IDB.
  */
-export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): TraceStoreView {
+export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, settings: Settings): TraceStoreView {
+  // Read inside async work that must not be re-created when a setting changes.
+  const settingsRef = useRef(settings)
+  useEffect(() => {
+    settingsRef.current = settings
+  }, [settings])
   const [rows, setRows] = useState<StoredTrace[]>([])
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
@@ -147,10 +152,11 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
     let cancelled = false
     void (async () => {
       try {
-        const first = await getTracePage(PAGE)
+        const page = settingsRef.current.pageSize
+        const first = await getTracePage(page)
         if (cancelled) return
         setRows((prev) => merge(prev, first))
-        setHasMore(first.length === PAGE)
+        setHasMore(first.length === page)
         setTotal(await countTraces())
         okStorage('read')
       } catch (e) {
@@ -177,9 +183,43 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
     const overtaken = () => cancelled || gen !== clearGenRef.current
     const batch = fresh.map(withKey)
     void (async () => {
-      try {
+      /**
+       * Insert, then evict down to the user's limit.
+       *
+       * The eviction count is driven by how many rows the insert actually *added*,
+       * measured across it — not by `fresh.length`. Every batch re-persists the whole
+       * live window (up to `TRACE_WINDOW`), and nearly all of it is already stored, so
+       * `fresh.length` overstates the arrival by orders of magnitude: at factor 1 a
+       * single overflowing row would have evicted hundreds, leaving the store far
+       * below the limit and pruning on every batch forever.
+       */
+      const store = async () => {
+        const before = await countTraces()
         await upsertTraces(fresh)
-        await pruneTraces()
+        const after = await countTraces()
+        const s = settingsRef.current
+        await pruneOldest(evictionCount(after, after - before, s))
+      }
+      try {
+        try {
+          await store()
+        } catch (first) {
+          // 🔴 Retention could not save us before: eviction ran *after* the insert,
+          // so a quota-refused write skipped it, no space was freed, and the next
+          // batch failed for the same reason — the failure kept itself alive. Evict
+          // first, then try once more. A count limit cannot bound bytes anyway, so
+          // the browser's quota, not ours, is what usually bites.
+          // Here `fresh.length` is the right measure, unlike above: the insert was
+          // refused, so nothing was added and there is no arrival count to read.
+          // What we need is room for the batch we are about to insert, and under
+          // quota pressure the constraint is bytes rather than rows — freeing
+          // generously is the point.
+          const s = settingsRef.current
+          const total = await countTraces()
+          const freed = await pruneOldest(Math.max(fresh.length * s.evictionFactor, total - s.retention))
+          if (freed === 0) throw first // nothing to give back; report the original failure
+          await store()
+        }
         if (overtaken()) return
         setTotal(await countTraces())
         okStorage('write')
@@ -187,8 +227,8 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
         // The batch is still merged into the view below, so live traffic keeps
         // showing — but those rows were not persisted and the count did not move.
         // Both are visible on screen, so both have to be qualified.
-        // `pruneTraces` counts here too: retention that silently stops being
-        // enforced is how a quota failure arrives in the first place.
+        // Eviction counts here too: retention that silently stops being enforced is
+        // how a quota failure arrives in the first place.
         if (!overtaken()) failStorage('write', e)
       }
       if (!overtaken()) setRows((prev) => merge(prev, batch))
@@ -204,9 +244,10 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean): Tra
       try {
         const current = rowsRef.current
         const oldest = current[current.length - 1]
-        const page = await getTracePage(PAGE, oldest?.epochMillis)
+        const size = settingsRef.current.pageSize
+        const page = await getTracePage(size, oldest?.epochMillis)
         setRows((prev) => merge(prev, page))
-        setHasMore(page.length === PAGE)
+        setHasMore(page.length === size)
         okStorage('read')
       } catch (e) {
         // Without this the rejection escaped unhandled and `setLoadingOlder(false)`

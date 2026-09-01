@@ -36,6 +36,26 @@ async function settle(): Promise<void> {
   })
 }
 
+/**
+ * Wait until the store and IndexedDB agree, so a snapshot of one is a snapshot of
+ * both.
+ *
+ * `countTraces() > 0` is not enough: the write path counts, inserts, counts again
+ * and prunes before it calls `setTotal`/`setRows`, so a poll can catch it
+ * mid-pipeline and the continuation then lands *after* the snapshot — the
+ * assertions compare against a state that has since moved. Measured: this test
+ * failed roughly once in a dozen runs that way.
+ */
+async function quiesced(total: () => number): Promise<number> {
+  await waitFor(async () => {
+    const stored = await db.countTraces()
+    expect(stored).toBeGreaterThan(0)
+    expect(total()).toBe(stored)
+  })
+  await settle()
+  return db.countTraces()
+}
+
 /** Connect and deliver the fixture dump, so there is something to store. */
 async function connected() {
   const hook = renderHook(() => useConsoleUnderTest())
@@ -115,8 +135,7 @@ describe('a write the browser refuses', () => {
 describe('a delete the browser refuses', () => {
   it('does not report a deletion that did not happen', async () => {
     const { result } = await connected()
-    await waitFor(async () => expect(await db.countTraces()).toBeGreaterThan(0))
-    const stored = await db.countTraces()
+    const stored = await quiesced(() => result.current.store.total)
     const shown = result.current.store.rows.length
 
     vi.mocked(db.clearTraces).mockRejectedValueOnce(quota())
@@ -138,7 +157,7 @@ describe('a delete the browser refuses', () => {
 
   it('still deletes, and reports success, when storage cooperates', async () => {
     const { result } = await connected()
-    await waitFor(async () => expect(await db.countTraces()).toBeGreaterThan(0))
+    await quiesced(() => result.current.store.total)
 
     await act(async () => {
       result.current.store.clear()

@@ -31,6 +31,7 @@ export function platformOrigin(): string {
 // Full history lives in IndexedDB (useTraceStore); this is just the live view.
 const TRACE_WINDOW = 500
 // If the stream never opens (no platform reachable), fall back to sample data.
+// The wait is a user setting; this is the fallback for callers without one.
 const SAMPLE_DELAY_MS = 2500
 // A healthy stream pushes metrics/modules snapshots ~1×/s, so it's never silent
 // for long. If no event arrives within this window the connection is dead — even
@@ -125,7 +126,7 @@ function mockData(now: number): LiveData {
  * IndexedDB retains the full history. Mock data is shown only on a cold start
  * with no platform reachable.
  */
-export function useConsoleData() {
+export function useConsoleData(settings?: { sampleDelayMs: number }) {
   const [data, setData] = useState<LiveData | null>(null)
   const [conn, setConn] = useState<ConnState>({ status: 'initial' })
   const [streaming, setStreaming] = useState(true)
@@ -381,7 +382,7 @@ export function useConsoleData() {
         setData(mockData(Date.now()))
         setConn({ status: 'sample' })
       }
-    }, SAMPLE_DELAY_MS)
+    }, settings?.sampleDelayMs ?? SAMPLE_DELAY_MS)
 
     open()
 
@@ -392,7 +393,7 @@ export function useConsoleData() {
       window.clearTimeout(reconnectTimer)
       es?.close()
     }
-  }, [streaming])
+  }, [streaming, settings?.sampleDelayMs])
 
   return { data, conn, channels, streaming, setStreaming }
 }

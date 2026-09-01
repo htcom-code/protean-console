@@ -310,6 +310,38 @@ describe('cold start', () => {
     expect(result.current.data?.traces.length).toBeGreaterThan(0)
   })
 
+  it('waits as long as the user configured, not the built-in default', () => {
+    // The delay is a setting now. Nothing else in the suite would notice it being
+    // ignored, because the default happens to equal the constant it replaced —
+    // measured: hardcoding the constant back left all 81 tests green.
+    const { result } = renderHook(() => useConsoleData({ sampleDelayMs: 800 }))
+
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+    expect(result.current.conn.status).toBe('initial')
+
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(result.current.conn.status).toBe('sample')
+  })
+
+  it('honours a delay longer than the default too', () => {
+    // The other direction, so the assertion cannot pass by firing early.
+    const { result } = renderHook(() => useConsoleData({ sampleDelayMs: 9_000 }))
+
+    act(() => {
+      vi.advanceTimersByTime(3_000) // well past the 2.5s default
+    })
+    expect(result.current.conn.status).toBe('initial')
+
+    act(() => {
+      vi.advanceTimersByTime(6_100)
+    })
+    expect(result.current.conn.status).toBe('sample')
+  })
+
   it('falls back to sample data even while every connect attempt is refused', () => {
     // A cold start against a platform that is simply not there. The refused
     // attempts must not keep the console on the connecting spinner: with nothing
