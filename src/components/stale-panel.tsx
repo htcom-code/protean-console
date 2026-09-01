@@ -1,6 +1,7 @@
 import { AlertTriangle } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { Channel, ChannelStates } from '@/hooks/use-console-data'
+import type { StorageHealth } from '@/hooks/use-trace-store'
 import { cn } from '@/lib/utils'
 
 /**
@@ -28,6 +29,34 @@ export function staleReason(channels: ChannelStates, feeds: readonly Channel[]):
   const frames = bad.reduce((n, c) => n + channels[c].rejected, 0)
   const which = bad.join(' and ')
   return `${which}: ${frames} frames this console could not read — showing the last data the platform sent correctly. Clears as soon as ${bad.length > 1 ? 'each channel delivers' : 'this channel delivers'} one readable frame.`
+}
+
+/**
+ * What the trace table says when the browser's storage is not doing its job.
+ *
+ * Each operation fails into a different lie, so each gets its own sentence — an
+ * unread history reads as an empty one, unwritten rows look retained, and a failed
+ * delete looks like a successful one. The `DOMException.name` is reported verbatim:
+ * `QuotaExceededError` tells the operator to clear history, and turning the rest
+ * into prose would be inventing a cause we do not know.
+ *
+ * The write copy says "not in storage yet" rather than "will be gone". Measured: the
+ * store persists the whole live window on every batch, so a later successful write
+ * picks up whatever is still in that window. The loss is permanent only for traces
+ * that fall out of the window first — and promising more than that would be its own
+ * false statement.
+ */
+export function storageReason(storage: StorageHealth): string | null {
+  if (storage.failed === 0 || storage.op === null) return null
+  const err = storage.lastError ?? 'Error'
+  switch (storage.op) {
+    case 'write':
+      return `not saving to browser storage — ${err}. The rows below are not in storage yet.`
+    case 'read':
+      return `saved history could not be read — ${err}. This table may be missing rows that are still stored.`
+    case 'clear':
+      return `history was NOT deleted — ${err}. The rows below are still in storage.`
+  }
 }
 
 /** Dim + annotate a panel whose data has stopped being current. */

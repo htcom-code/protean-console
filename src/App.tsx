@@ -10,6 +10,7 @@ import { TraceTable } from '@/components/trace-table'
 import { LoginScreen } from '@/components/login-screen'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useConsoleData } from '@/hooks/use-console-data'
+import { useSettings } from '@/hooks/use-settings'
 import { StalePanel, staleReason } from '@/components/stale-panel'
 import { useTraceStore } from '@/hooks/use-trace-store'
 import { useTheme } from '@/hooks/use-theme'
@@ -30,7 +31,8 @@ export default function App() {
   const [sort, setSort] = usePersistentState<MetricSort>('pc:metricsSort', DEFAULT_SORT)
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
-  const { data, conn, channels, streaming, setStreaming } = useConsoleData()
+  const { settings, save: saveSettings } = useSettings()
+  const { data, conn, channels, streaming, setStreaming } = useConsoleData(settings)
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
@@ -39,7 +41,7 @@ export default function App() {
     conn.status === 'disconnected' ||
     conn.status === 'unreadable' ||
     conn.status === 'paused'
-  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist)
+  const traceStore = useTraceStore(data?.traces ?? NO_TRACES, persist, settings)
 
   // Each panel is dimmed by the channel that feeds it, not by the connection as a
   // whole: one unreadable channel must not cast doubt on data that arrived fine.
@@ -66,6 +68,9 @@ export default function App() {
         onToggleTheme={toggle}
         conn={conn}
         channels={channels}
+        storage={traceStore.storage}
+        settings={settings}
+        onSaveSettings={saveSettings}
       />
 
       {disconnected && <ConnectionBanner conn={conn} />}

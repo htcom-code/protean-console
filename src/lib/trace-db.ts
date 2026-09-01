@@ -1,4 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { matchesFilter, type TraceFilter } from '@/lib/trace-filter'
 import type { RequestTrace } from '@/lib/types'
 
 // Client-side trace history. The server keeps only a small ring buffer (~200),
@@ -16,7 +17,11 @@ const DB_VERSION = 1
 const STORE = 'traces'
 const BY_EPOCH = 'byEpoch'
 
-/** Cap on retained rows; oldest beyond this are pruned. */
+/**
+ * Default cap on retained rows. The effective limit is a user setting
+ * (`settings.ts`), which cannot go below this; this constant is its floor and the
+ * fallback for callers that do not carry settings.
+ */
 export const TRACE_RETENTION = 50_000
 
 export type StoredTrace = RequestTrace & { _key: string }
@@ -49,6 +54,25 @@ function db(): Promise<IDBPDatabase<TraceDBSchema>> {
 }
 
 /**
+ * Mark a transaction's completion as observed.
+ *
+ * A refused write rejects the *request*, and the browser then aborts the whole
+ * transaction. The caller learns about it from the request — the `await` on the puts
+ * rejects there and never reaches `await tx.done` — so `tx.done` rejects with an
+ * `AbortError` that nobody is waiting for, and the page logs an unhandled rejection
+ * for a failure the console has already handled and reported. `idb` creates that
+ * promise eagerly when the transaction opens, so it cannot be avoided by not
+ * touching it. This swallows nothing: the real error still comes out of the request,
+ * which is what the store reports.
+ *
+ * Found by giving `fake-indexeddb` a byte budget (`src/test/idb-quota.ts`) — no test
+ * could reach a real quota abort before that.
+ */
+function observeAbort(tx: { done: Promise<unknown> }): void {
+  void tx.done.catch(() => {})
+}
+
+/**
  * Upsert a batch (idempotent by key). All puts are issued synchronously within
  * one transaction — no intervening awaits — so the tx can't auto-close mid-batch.
  */
@@ -56,8 +80,49 @@ export async function upsertTraces(traces: RequestTrace[]): Promise<void> {
   if (traces.length === 0) return
   const database = await db()
   const tx = database.transaction(STORE, 'readwrite')
+  observeAbort(tx)
   await Promise.all(traces.map((t) => tx.store.put({ ...t, _key: traceKey(t) })))
   await tx.done
+}
+
+/** Matches for a filter, and whether the search reached the end of the history. */
+export interface TraceMatches {
+  rows: StoredTrace[]
+  /** True when the scan walked past the oldest retained trace — there is no more to find. */
+  complete: boolean
+}
+
+/**
+ * Search the whole retained history for a filter, newest-first.
+ *
+ * 🔴 A filter is a query over everything kept, not over whatever happens to be loaded.
+ * The table used to filter the in-memory page and lean on infinite scroll to widen it,
+ * which made the *user* responsible for paging until matches appeared — and made the
+ * panel say "No traces match" when the matches were simply further back. Measured on a
+ * 47,320-row store: two 404s sat 4,381 rows down, 22 pages past what was loaded.
+ *
+ * One cursor, one transaction, stopping as soon as `limit` matches are collected. Where
+ * matches are rare the cursor walks the whole store, which is the cost of answering the
+ * question honestly — and it is one read, not one per page.
+ *
+ * `beforeEpoch` continues an earlier search from its oldest match.
+ */
+export async function findTraces(filter: TraceFilter, limit: number, beforeEpoch?: number): Promise<TraceMatches> {
+  const database = await db()
+  const range = beforeEpoch != null ? IDBKeyRange.upperBound(beforeEpoch, true) : undefined
+  const rows: StoredTrace[] = []
+  let cursor = await database.transaction(STORE).store.index(BY_EPOCH).openCursor(range, 'prev')
+  while (cursor) {
+    if (matchesFilter(cursor.value, filter)) {
+      rows.push(cursor.value)
+      if (rows.length >= limit) {
+        // Stopped early: rows older than the last match are unexamined.
+        return { rows, complete: false }
+      }
+    }
+    cursor = await cursor.continue()
+  }
+  return { rows, complete: true }
 }
 
 /**
@@ -88,6 +153,32 @@ export async function clearTraces(): Promise<void> {
   await (await db()).clear(STORE)
 }
 
+/**
+ * Drop the oldest rows once the store is over its limit.
+ *
+ * `count` is how many to remove; the caller decides that from the limit, the size
+ * of the batch that arrived and the user's eviction factor (`evictionCount` in
+ * `settings.ts`). Passing it in rather than recomputing here keeps the policy in
+ * one place and lets this stay a mechanism.
+ */
+export async function pruneOldest(count: number): Promise<number> {
+  if (count <= 0) return 0
+  const database = await db()
+  const tx = database.transaction(STORE, 'readwrite')
+  observeAbort(tx)
+  let cursor = await tx.store.index(BY_EPOCH).openCursor(null, 'next') // oldest first
+  let deleted = 0
+  let toDelete = count
+  while (cursor && toDelete > 0) {
+    await cursor.delete()
+    deleted += 1
+    toDelete -= 1
+    cursor = await cursor.continue()
+  }
+  await tx.done
+  return deleted
+}
+
 /** Drop oldest rows beyond `max` (default retention cap). */
 export async function pruneTraces(max = TRACE_RETENTION): Promise<number> {
   const database = await db()
@@ -95,6 +186,7 @@ export async function pruneTraces(max = TRACE_RETENTION): Promise<number> {
   if (total <= max) return 0
   let toDelete = total - max
   const tx = database.transaction(STORE, 'readwrite')
+  observeAbort(tx)
   let cursor = await tx.store.index(BY_EPOCH).openCursor(null, 'next') // oldest first
   let deleted = 0
   while (cursor && toDelete > 0) {

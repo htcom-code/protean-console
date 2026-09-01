@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { AlertTriangle, Inbox, SearchX, Trash2 } from 'lucide-react'
+import { AlertTriangle, Database, Inbox, Loader2, SearchX, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { MethodChip, StatusPill } from '@/components/status-pill'
+import { storageReason } from '@/components/stale-panel'
 import { cn } from '@/lib/utils'
 import { clock, num } from '@/lib/format'
 import type { TraceStoreView } from '@/hooks/use-trace-store'
 import type { StoredTrace } from '@/lib/trace-db'
-
-type ChipKey = 'all' | 'errors' | 'slow'
+import { isFiltering, type ChipKey } from '@/lib/trace-filter'
 
 const ROW_H = 41
 
@@ -32,6 +32,55 @@ function shortId(id: string | null): string {
   return id ? `${id.slice(0, 8)}…` : '—'
 }
 
+/**
+ * Whether the last rows coming into view should pull the next page of history.
+ *
+ * 🔴 The overflow test is the fix, and it is the whole point of this being a function.
+ * `rowCount` is the *filtered* row count, so proximity alone is meaningless when few
+ * rows match: with two matches `lastIndex` (1) is trivially `>= rowCount - 15` (-13),
+ * so a page loaded, the unfiltered set grew, the filtered set stayed at two — and it
+ * fired again. Measured in the browser: pressing "Errors only" on a 47,320-row store
+ * issued **189 IndexedDB page reads in three seconds** and flipped the control between
+ * "Load older" and "loading…" the whole time, on its way to paging the entire store
+ * into memory.
+ *
+ * Overflow is the precondition proximity was assuming all along — only a list taller
+ * than its viewport can be scrolled to its end, so only then does "the last row is in
+ * view" mean the user asked for more. When a filter leaves too little to scroll, the
+ * button stays and the user pages deliberately.
+ *
+ * Extracted from the effect so the rule can be tested directly: the table body is
+ * virtualized and jsdom has no layout, which makes every DOM-level assertion here pass
+ * for the wrong reason.
+ */
+export function shouldLoadOlder({
+  hasMore,
+  loadingOlder,
+  itemCount,
+  lastIndex,
+  rowCount,
+  totalSize,
+  viewportHeight,
+}: {
+  hasMore: boolean
+  loadingOlder: boolean
+  /** Rows the virtualizer is currently rendering. */
+  itemCount: number
+  /** Index of the last rendered row. */
+  lastIndex: number
+  /** Rows after filtering — what the virtualizer is measuring. */
+  rowCount: number
+  /** Height of the whole virtual list. */
+  totalSize: number
+  /** Height of the scroll box the list sits in. */
+  viewportHeight: number
+}): boolean {
+  if (!hasMore || loadingOlder) return false
+  if (itemCount === 0) return false
+  if (totalSize <= viewportHeight) return false
+  return lastIndex >= rowCount - 15
+}
+
 export function TraceTable({
   store,
   staleReason,
@@ -40,23 +89,15 @@ export function TraceTable({
   /** Set when the trace channel has gone unreadable; shown in the header, never over the rows. */
   staleReason?: string | null
 }) {
-  const { rows: allRows, total, hasMore, loadingOlder, loadOlder, clear } = store
-  const [chip, setChip] = useState<ChipKey>('all')
-  const [q, setQ] = useState('')
+  const storageNote = storageReason(store.storage)
+  // 🔴 The filter is not applied here. It is a query the store answers against the
+  // whole retained history — filtering the loaded page instead is what made the panel
+  // report "No traces match" while the matches sat thousands of rows further back, and
+  // what turned infinite scroll into a loop that paged the entire store.
+  const { rows, total, hasMore, loadingOlder, loadOlder, clear, filter, setFilter, searching } = store
+  const { chip, query } = filter
+  const filtering = isFiltering(filter)
   const [copied, setCopied] = useState<string | null>(null)
-
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    return allRows.filter((t) => {
-      if (chip === 'errors' && !(t.error || t.status >= 400)) return false
-      if (chip === 'slow' && t.latencyMs <= 100) return false
-      if (needle) {
-        const hay = `${t.uri} ${t.pattern ?? ''} ${t.moduleId ?? ''} ${t.traceId ?? ''}`.toLowerCase()
-        if (!hay.includes(needle)) return false
-      }
-      return true
-    })
-  }, [allRows, chip, q])
 
   const parentRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
@@ -66,14 +107,29 @@ export function TraceTable({
     overscan: 14,
   })
   const items = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
   const paddingTop = items.length > 0 ? items[0].start : 0
-  const paddingBottom = items.length > 0 ? virtualizer.getTotalSize() - items[items.length - 1].end : 0
+  const paddingBottom = items.length > 0 ? totalSize - items[items.length - 1].end : 0
 
   // Infinite scroll: pull the next IDB page when the last rows come into view.
   const lastIndex = items.length > 0 ? items[items.length - 1].index : 0
   useEffect(() => {
-    if (hasMore && !loadingOlder && lastIndex >= rows.length - 15) loadOlder()
-  }, [hasMore, loadingOlder, lastIndex, rows.length, loadOlder])
+    const scroller = parentRef.current
+    if (!scroller) return
+    if (
+      shouldLoadOlder({
+        hasMore,
+        loadingOlder,
+        itemCount: items.length,
+        lastIndex,
+        rowCount: rows.length,
+        totalSize,
+        viewportHeight: scroller.clientHeight,
+      })
+    ) {
+      loadOlder()
+    }
+  }, [hasMore, loadingOlder, lastIndex, rows.length, items.length, totalSize, loadOlder])
 
   async function copy(t: StoredTrace) {
     if (!t.traceId) return
@@ -94,6 +150,15 @@ export function TraceTable({
           {staleReason}
         </p>
       )}
+      {/* Storage trouble is a different kind of trouble from a stale channel — that
+          one is the platform's, this one is the browser's — so it reads in the
+          harder colour and says which operation failed. */}
+      {storageNote && (
+        <p className="flex items-start gap-1.5 font-mono text-[11px] leading-relaxed text-crit">
+          <Database className="mt-[1px] size-3 shrink-0" aria-hidden />
+          {storageNote}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2.5">
         <h2 className="text-sm font-semibold">Recent traces</h2>
         <span className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-muted-foreground">
@@ -111,7 +176,7 @@ export function TraceTable({
               key={key}
               type="button"
               aria-pressed={chip === key}
-              onClick={() => setChip(key)}
+              onClick={() => setFilter({ ...filter, chip: key })}
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11.5px] text-muted-foreground transition-colors',
                 chip !== key && 'hover:text-foreground',
@@ -139,8 +204,8 @@ export function TraceTable({
             <Trash2 className="size-3.5" aria-hidden />
           </button>
           <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            value={query}
+            onChange={(e) => setFilter({ ...filter, query: e.target.value })}
             type="search"
             placeholder="filter uri / module / traceId…"
             className="h-8 w-[210px] font-mono text-xs"
@@ -150,8 +215,20 @@ export function TraceTable({
       </div>
 
       <Card className="overflow-hidden py-0">
-        {rows.length === 0 ? (
-          allRows.length === 0 ? (
+        {searching && rows.length === 0 ? (
+          <Empty className="min-h-[240px]">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Loader2 className="animate-spin" />
+              </EmptyMedia>
+              {/* One state for the whole search, however far back it has to walk. The
+                  operator is never asked to page toward the answer. */}
+              <EmptyTitle>Searching {num(total)} retained traces…</EmptyTitle>
+              <EmptyDescription>Looking through everything kept in this browser, newest first.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : rows.length === 0 ? (
+          total === 0 ? (
             <Empty className="min-h-[240px]">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -170,8 +247,11 @@ export function TraceTable({
                   <SearchX />
                 </EmptyMedia>
                 <EmptyTitle>No traces match</EmptyTitle>
+                {/* Truthful now: the store scanned every retained trace to say this. */}
                 <EmptyDescription>
-                  Clear the filter or search to see all {num(total)} retained traces.
+                  {filtering
+                    ? `Searched all ${num(total)} retained traces. Clear the filter or search to see them.`
+                    : `Clear the filter or search to see all ${num(total)} retained traces.`}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
