@@ -22,17 +22,28 @@ function niceTicks(max: number, count = 4): number[] {
   return ticks
 }
 
+/**
+ * The axis an empty chart is drawn on.
+ *
+ * With no samples there is nothing to scale to, and the card used to disappear
+ * entirely — which left the row it shares with the status mix broken, and told a
+ * platform with no traffic yet that it had no chart. The frame is drawn instead,
+ * on a scale this console picked rather than measured, and the header says so:
+ * a chart whose numbers could be read as a measured range is worse than none.
+ */
+const EMPTY_SCALE_MAX = 100
+
 /** Single-series p95 latency area with a crosshair+tooltip. One hue (telemetry), no legend needed. */
 export function LatencyChart({ series }: { series: number[] }) {
   const gradId = useId()
   const svgRef = useRef<SVGSVGElement>(null)
   const [hover, setHover] = useState<number | null>(null)
   const n = series.length
+  const empty = n === 0
 
-  if (n === 0) return null
   // Nice round ticks give the scale; the top tick already clears the data max,
   // so the axis has headroom without an arbitrary multiplier.
-  const gridVals = niceTicks(Math.max(...series))
+  const gridVals = niceTicks(empty ? EMPTY_SCALE_MAX : Math.max(...series))
   const max = gridVals[gridVals.length - 1] || 1
   // A single bucket has no span to interpolate across — `i / (n - 1)` would be
   // 0/0 and poison every coordinate with NaN. Pin the lone sample to the right
@@ -41,9 +52,10 @@ export function LatencyChart({ series }: { series: number[] }) {
   const y = (v: number) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b)
 
   const pts = series.map((v, i) => `${x(i)},${y(v)}`).join(' ')
-  const area = `${PAD.l},${y(0)} ${pts} ${x(n - 1)},${y(0)}`
+  const area = empty ? '' : `${PAD.l},${y(0)} ${pts} ${x(n - 1)},${y(0)}`
 
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (empty) return // nothing to point at, and `x`/`y` have no sample to resolve
     const r = svgRef.current!.getBoundingClientRect()
     const relX = ((e.clientX - r.left) / r.width) * W
     const i = Math.max(0, Math.min(n - 1, Math.round((relX - PAD.l) / (W - PAD.l - PAD.r) * (n - 1))))
@@ -54,7 +66,9 @@ export function LatencyChart({ series }: { series: number[] }) {
     <Card className="gap-0 overflow-hidden pb-3">
       <CardHeader className="flex items-baseline justify-between pb-2">
         <CardTitle className="text-[13.5px] font-semibold">Latency p95 over time</CardTitle>
-        <span className="font-mono text-[11px] text-muted-foreground">ms · rolling window</span>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {empty ? 'ms · default scale' : 'ms · rolling window'}
+        </span>
       </CardHeader>
       <div className="relative px-2.5">
         <svg
@@ -82,12 +96,16 @@ export function LatencyChart({ series }: { series: number[] }) {
             </g>
           ))}
           {/* Line and area need two points to mean anything; with one bucket the
-              area would ramp from a zero baseline it never measured. Show the dot alone. */}
+              area would ramp from a zero baseline it never measured. Show the dot alone.
+              With no samples at all, nothing is drawn over the grid — an empty chart
+              must not be given a shape to read. */}
           {n > 1 && <polygon points={area} fill={`url(#${gradId})`} />}
           {n > 1 && (
             <polyline points={pts} fill="none" stroke="var(--telemetry)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           )}
-          <circle cx={x(n - 1)} cy={y(series[n - 1])} r={3.6} fill="var(--telemetry)" stroke="var(--card)" strokeWidth={2} />
+          {!empty && (
+            <circle cx={x(n - 1)} cy={y(series[n - 1])} r={3.6} fill="var(--telemetry)" stroke="var(--card)" strokeWidth={2} />
+          )}
           {hover != null && (
             <>
               <line x1={x(hover)} y1={PAD.t} x2={x(hover)} y2={H - PAD.b} stroke="var(--telemetry)" strokeWidth={1} opacity={0.5} />
@@ -95,6 +113,11 @@ export function LatencyChart({ series }: { series: number[] }) {
             </>
           )}
         </svg>
+        {empty && (
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[11.5px] text-muted-foreground">
+            No samples in this window yet
+          </p>
+        )}
         {hover != null && (
           <div
             className="pointer-events-none absolute -translate-x-1/2 -translate-y-2 rounded-md bg-foreground px-2 py-1 font-mono text-[11px] text-background shadow-lg"

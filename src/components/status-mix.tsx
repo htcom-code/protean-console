@@ -12,7 +12,11 @@ const BUCKETS = [
 /** Status-code distribution over the sampled traces — magnitude bars, one hue per status. */
 export function StatusMix({ traces }: { traces: RequestTrace[] }) {
   const counts = BUCKETS.map((b) => ({ ...b, n: traces.filter((t) => b.test(t.status)).length }))
-  const total = counts.reduce((a, b) => a + b.n, 0) || 1
+  const total = counts.reduce((a, b) => a + b.n, 0)
+  // Separated because they were one value, and the `|| 1` that keeps the bar widths
+  // from dividing by zero was also what the header printed: an idle platform read
+  // "1 req" beside four zeroes. The guard belongs to the geometry, not to the count.
+  const denom = total || 1
 
   return (
     <Card className="gap-0">
@@ -30,7 +34,7 @@ export function StatusMix({ traces }: { traces: RequestTrace[] }) {
             <span className="h-2 overflow-hidden rounded-full bg-muted" title={b.label}>
               <span
                 className="block h-full rounded-full"
-                style={{ width: `${Math.max(2, (b.n / total) * 100)}%`, background: b.color }}
+                style={{ width: `${Math.max(2, (b.n / denom) * 100)}%`, background: b.color }}
               />
             </span>
             <span className="font-mono text-xs tabular-nums text-muted-foreground">{num(b.n)}</span>
