@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ChevronsUpDown, Gauge, SearchX } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Card } from '@/components/ui/card'
@@ -36,9 +36,92 @@ function compare(a: ModuleMetricsSnapshot, b: ModuleMetricsSnapshot, key: Metric
   return a[key] - b[key]
 }
 
+/**
+ * What the table says when it has no metrics to show.
+ *
+ * An empty `metrics` array means two different things — recording is off, or it
+ * is on and no module has been called yet — and the array cannot tell them apart.
+ * The console used to guess, and told operators to switch on a setting that was
+ * already on. It no longer guesses: the platform states `metricsEnabled` in the
+ * connection ack and that is what this reads.
+ *
+ * `null` is the third case, and it is not a failure: a platform that sends no ack
+ * has not been asked and has not answered. The copy then says what is true of
+ * both possibilities rather than picking one.
+ *
+ * 🔴 `tracesEnabled` is read first, and that ordering is required rather than
+ * defensive. Per-module metrics are aggregated from recorded requests, so with
+ * recording off nothing reaches the aggregate — and the contract states
+ * `metricsEnabled` as the *effective* value, which means a platform with recording
+ * off reports metrics off too. Read on its own, that value would send this panel
+ * into "turn it on and rows appear as modules receive traffic": an instruction
+ * that changes nothing and a promise nothing can keep while recording is off.
+ *
+ * It also covers the reverse pair. `metricsEnabled: true` alongside
+ * `tracesEnabled: false` contradicts the contract, but the console cannot verify
+ * an ack — it can only decline to promise rows on the strength of one.
+ */
+function emptyMetrics(
+  metricsEnabled: boolean | null,
+  tracesEnabled: boolean | null,
+): { title: string; description: ReactNode } {
+  if (tracesEnabled === false) {
+    return {
+      title: 'Trace recording is off',
+      description: (
+        <>
+          The platform reported <Setting>protean.trace.enabled=false</Setting> when this connection opened.
+          Per-module metrics are aggregated from recorded requests, so no rows can appear here while recording
+          is off.
+        </>
+      ),
+    }
+  }
+  if (metricsEnabled === false) {
+    return {
+      title: 'Module metrics are off',
+      description: (
+        <>
+          The platform reported <Setting>protean.trace.metrics.enabled=false</Setting> when this connection
+          opened. Turn it on and rows appear as modules receive traffic.
+        </>
+      ),
+    }
+  }
+  if (metricsEnabled === true) {
+    return {
+      title: 'No module traffic yet',
+      description: (
+        <>
+          Per-module metrics are on. No module has served a request the platform recorded, so there is nothing
+          to aggregate yet — rows appear as traffic arrives.
+        </>
+      ),
+    }
+  }
+  return {
+    title: 'No module metrics',
+    description: (
+      <>
+        This platform did not state whether per-module metrics are recording, so this is either off or on and
+        idle. They are opt-in via <Setting>protean.trace.metrics.enabled</Setting>; when on, rows appear as
+        modules receive traffic.
+      </>
+    ),
+  }
+}
+
+function Setting({ children }: { children: ReactNode }) {
+  return (
+    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">{children}</code>
+  )
+}
+
 export function ModuleTable({
   metrics,
   modules,
+  metricsEnabled,
+  tracesEnabled,
   sort,
   onSort,
   selectedId,
@@ -46,6 +129,10 @@ export function ModuleTable({
 }: {
   metrics: ModuleMetricsSnapshot[]
   modules: ModuleStatus[]
+  /** From the platform's `ready` ack; `null` when it sent none. */
+  metricsEnabled: boolean | null
+  /** Also from the ack. Gates the above — see `emptyMetrics`. */
+  tracesEnabled: boolean | null
   sort: MetricSort
   onSort: (s: MetricSort) => void
   selectedId: string | null
@@ -79,6 +166,7 @@ export function ModuleTable({
     estimateSize: () => ROW_H,
     overscan: 12,
   })
+  const empty = emptyMetrics(metricsEnabled, tracesEnabled)
   const items = virtualizer.getVirtualItems()
   const paddingTop = items.length > 0 ? items[0].start : 0
   const paddingBottom = items.length > 0 ? virtualizer.getTotalSize() - items[items.length - 1].end : 0
@@ -130,14 +218,8 @@ export function ModuleTable({
                 <EmptyMedia variant="icon">
                   <Gauge />
                 </EmptyMedia>
-                <EmptyTitle>No module metrics</EmptyTitle>
-                <EmptyDescription>
-                  Per-module latency and error rates are opt-in. Enable{' '}
-                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">
-                    protean.trace.metrics.enabled=true
-                  </code>{' '}
-                  on the platform and restart; rows appear once modules receive traffic.
-                </EmptyDescription>
+                <EmptyTitle>{empty.title}</EmptyTitle>
+                <EmptyDescription>{empty.description}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (

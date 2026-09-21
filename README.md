@@ -55,6 +55,13 @@ in logs.
 - **Live SSE stream** — one connection to `/platform/traces/stream` multiplexes
   `trace` / `metrics` / `modules` / `summary` events pushed ~1×/s, with manual
   **Connect / Disconnect** control. Replaces the previous 5s REST polling.
+- **Connection ack** — the platform's `ready` frame names itself and its version,
+  states its trace-ring capacity, whether traces and per-module metrics are
+  recording, and its push period. The console reports those instead of assuming
+  them: the silence watchdog is sized from the stated period, the header prints
+  the stated ring size, and the module table stops guessing why it is empty. A
+  platform that sends no ack keeps working — the console then says it does not
+  know rather than falling back to a number nobody gave it.
 - **Live / sample auto-fallback** — when a platform is reachable, data is `live`;
   when none is running, the console falls back to grounded mock data so the UI is
   always explorable. The top bar shows a **LIVE** vs **SAMPLE DATA** badge.
@@ -180,14 +187,39 @@ src/
 ## Platform API surface
 
 The live path is a single SSE connection to `GET /platform/traces/stream`, which
-multiplexes four named events:
+opens with an acknowledgement and then multiplexes four named events:
 
 | Event | Maps to | Notes |
 |---|---|---|
+| `ready` | `StreamReady` | Connection ack, first frame, repeated on every reconnect. Optional: platforms that predate it are supported. |
 | `trace` | `RequestTrace[]` | Incremental delta since the last seq (initial snapshot on connect). |
 | `metrics` | `ModuleMetricsSnapshot[]` | Full per-module snapshot each tick. Opt-in via `protean.trace.metrics.enabled`. |
 | `modules` | `ModuleStatus[]` | Joined into the module table for isolation mode / trust tier. |
 | `summary` | `TraceSummary` | Windowed KPI aggregate + trend vs the previous window + active-module split by mode. |
+
+The `ready` ack is not a data frame. It carries what a client must learn once, at
+connect time, and cannot derive from the stream afterwards — on a quiet platform
+nothing else arrives at all, so it is also the only thing separating *the stream
+is open* from *the platform is running*:
+
+```
+event: ready
+data: {"platform":"protean","platformVersion":"0.1.0","tracesEnabled":true,
+       "metricsEnabled":false,"buffered":5,"tickMs":1000,"capacity":200}
+```
+
+| Field | What the console does with it |
+|---|---|
+| `platform` / `platformVersion` | Shown beside the origin in the header. **Display only** — no behaviour branches on which implementation answered. `null` version is rendered as unknown, never replaced with a guess. |
+| `tracesEnabled` / `metricsEnabled` | Separates "recording is off" from "recording is on and idle" — the two an empty panel cannot tell apart. `tracesEnabled` is read first: per-module metrics are aggregated from recorded requests, so with recording off no rows can appear whatever the metrics flag says. |
+| `buffered` | Read, but not acted on: it counts the rows of the `trace` frame that follows (not the ring's size), and those rows arrive regardless. |
+| `tickMs` | Sizes the silence watchdog (6 periods, clamped to 2–60s) instead of assuming 1Hz. |
+| `capacity` | The ring size as of this connection, printed in the `LIVE` badge. |
+
+Fields may be added later; the console ignores the ones it does not recognize.
+Every value is connection-scoped — the console drops them when the stream is
+rebuilt and re-learns them from the next ack, because they are live settings on
+the platform.
 
 The read-only REST surface (`GET /platform/traces`, `/platform/traces/metrics`,
 `/platform/modules`, `/platform/modules/{id}/routes`) is still mirrored in

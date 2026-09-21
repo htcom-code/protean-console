@@ -43,6 +43,7 @@ function Harness() {
       onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
       conn={{ status: 'live', lastUpdated: connectedAt }}
       channels={ALL_HEALTHY}
+      platform={null}
       storage={STORAGE_OK}
       settings={settings}
       onSaveSettings={save}

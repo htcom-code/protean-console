@@ -1,11 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useConsoleUnderTest } from '@/test/console-driver'
-import {
-  FIXTURE_NEWEST_EPOCH,
-  PLATFORMS,
-  traceFrame,
-} from '@/test/stream-fixtures'
+import { PLATFORMS, traceFrame } from '@/test/stream-fixtures'
 import { FakeEventSource, installFakeEventSource, replay, tracesIn } from '@/test/sse-stream'
 import { clearTraces, countTraces, getTracePage } from '@/lib/trace-db'
 
@@ -16,8 +12,9 @@ import { clearTraces, countTraces, getTracePage } from '@/lib/trace-db'
  * precondition really was destroyed. Without that negative step, a later success
  * cannot distinguish "the fix worked" from "nothing was ever broken".
  *
- * Both platforms' captured connect sequences run every scenario, because the
- * console's job is to be right about whichever one it is pointed at.
+ * Every captured connect sequence runs every scenario, because the console's job
+ * is to be right about whichever platform it is pointed at — including the ones
+ * that open with a `ready` ack and the ones that do not.
  */
 
 /** Retained rows, read from IndexedDB rather than from the hook's own state. */
@@ -49,7 +46,7 @@ afterEach(() => {
   restoreEventSource()
 })
 
-describe.each(PLATFORMS)('$name platform', ({ connect }) => {
+describe.each(PLATFORMS)('$name platform', ({ connect, newestEpoch }) => {
   const dumped = tracesIn(connect)
   const dumpedSeqs = dumped.map((t) => t.seq).sort((a, b) => a - b)
 
@@ -77,7 +74,7 @@ describe.each(PLATFORMS)('$name platform', ({ connect }) => {
 
     // ④ real traffic still accumulates on top.
     await act(async () => {
-      FakeEventSource.current().emit('trace', traceFrame(9001, FIXTURE_NEWEST_EPOCH + 1_000))
+      FakeEventSource.current().emit('trace', traceFrame(9001, newestEpoch + 1_000))
     })
     await waitFor(async () => expect(await countTraces()).toBe(dumped.length + 1))
   })
@@ -111,7 +108,7 @@ describe.each(PLATFORMS)('$name platform', ({ connect }) => {
 
     // ③ traffic after the clear is kept — the clear must not deafen the store.
     await act(async () => {
-      FakeEventSource.current().emit('trace', traceFrame(9002, FIXTURE_NEWEST_EPOCH + 2_000))
+      FakeEventSource.current().emit('trace', traceFrame(9002, newestEpoch + 2_000))
     })
     await waitFor(async () => expect(await retained()).toEqual([9002]))
   })
@@ -168,7 +165,7 @@ describe.each(PLATFORMS)('$name platform', ({ connect }) => {
 
     // Still listening: traffic after the clear lands normally.
     await act(async () => {
-      FakeEventSource.current().emit('trace', traceFrame(9003, FIXTURE_NEWEST_EPOCH + 3_000))
+      FakeEventSource.current().emit('trace', traceFrame(9003, newestEpoch + 3_000))
     })
     await waitFor(async () => expect(await retained()).toEqual([9003]))
   })

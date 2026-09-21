@@ -32,7 +32,7 @@ export default function App() {
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null)
 
   const { settings, save: saveSettings } = useSettings()
-  const { data, conn, channels, streaming, setStreaming } = useConsoleData(settings)
+  const { data, conn, channels, platform, streaming, setStreaming } = useConsoleData(settings)
   const disconnected = conn.status === 'disconnected'
 
   // Retain trace history in IndexedDB for a real platform; pass mock through.
@@ -68,6 +68,7 @@ export default function App() {
         onToggleTheme={toggle}
         conn={conn}
         channels={channels}
+        platform={platform}
         storage={traceStore.storage}
         settings={settings}
         onSaveSettings={saveSettings}
@@ -99,6 +100,8 @@ export default function App() {
             <ModuleTable
               metrics={data.metrics}
               modules={data.modules}
+              metricsEnabled={platform?.metricsEnabled ?? null}
+              tracesEnabled={platform?.tracesEnabled ?? null}
               sort={sort}
               onSort={setSort}
               selectedId={selectedModuleId}
@@ -108,7 +111,11 @@ export default function App() {
 
           {/* The trace table itself is left legible — dimming rows the operator is
               reading to find something is a poor trade. The note sits in its header. */}
-          <TraceTable store={traceStore} staleReason={staleTraceDerived} />
+          <TraceTable
+            store={traceStore}
+            staleReason={staleTraceDerived}
+            tracesEnabled={platform?.tracesEnabled ?? null}
+          />
 
           <footer className="font-mono text-[11px] leading-relaxed text-muted-foreground">
             Columns map 1:1 to the platform trace surface — rows are{' '}

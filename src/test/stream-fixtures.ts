@@ -13,7 +13,10 @@
  * both rather than against one and a guess about the other:
  *
  *  - Spring opens with the ring-buffer dump; Go opens with a `hello` frame the
- *    console has no listener for, then the dump.
+ *    console has no listener for, then the dump. Protean has since replaced both
+ *    openings with a `ready` ack — see `PROTEAN_CONNECT` below, and note that the
+ *    two captures are kept as they are: platforms that send no ack still exist
+ *    (Go and Rust have not adopted it), and that is an axis worth testing.
  *  - Both send the dump newest-first, as one array in one frame.
  *  - Module rows carry different fields (`controllerFqcn`/`needsSharedBeans`
  *    exist only on the JVM); `mode` is the field the console reads.
@@ -52,10 +55,58 @@ data: {"windowMs":60000,"count":5,"errorCount":0,"errorRate":0,"p50LatencyMs":0,
 
 `
 
-/** Both connect sequences, for scenarios that must hold on either platform. */
+/**
+ * Protean (Java) with the `ready` ack — captured 2026-09-21 against
+ * `examples/quickstart` on :8080 (in-process mode, H2), running protean `237bcd0`
+ * (#80, `feat(web): ack a console stream connection with a ready frame`).
+ *
+ * Abridged the same way as the two captures above: correlation ids are synthetic
+ * because this is a public repository. Everything else is the bytes as they
+ * arrived — `event:ready` with no space after the colon, the ack ahead of the
+ * replay, and `buffered` equal to the number of rows in the `trace` frame that
+ * follows it (5 and 5, asserted in `ready-ack.test.ts`).
+ *
+ * Two values here are the platform as it really runs, not as a contract example
+ * would draw it, and both are worth keeping:
+ *
+ *  - `platformVersion` is `0.1.0-SNAPSHOT` — a development build. The console
+ *    prints it and does not compare it: the only released version, `0.0.1`, sends
+ *    no ack at all, and a `-SNAPSHOT` sorts *below* the release it precedes.
+ *  - `metricsEnabled` is `false`, quickstart's default, with an empty `metrics`
+ *    frame behind it. That pairing is the one the console used to misread as
+ *    "enable this setting" when it was already on.
+ */
+export const PROTEAN_CONNECT = `event:ready
+data:{"platform":"protean","platformVersion":"0.1.0-SNAPSHOT","tracesEnabled":true,"metricsEnabled":false,"buffered":5,"tickMs":1000,"capacity":200}
+
+event:trace
+data:[{"seq":5,"epochMillis":1789971324093,"method":"GET","uri":"/platform/mcp","pattern":"/**","moduleId":null,"status":404,"latencyMs":0,"error":null,"traceId":"cccc0000-0000-4000-8000-000000000005"},{"seq":4,"epochMillis":1789971324089,"method":"POST","uri":"/platform/mcp","pattern":"/**","moduleId":null,"status":404,"latencyMs":0,"error":null,"traceId":"cccc0000-0000-4000-8000-000000000004"},{"seq":3,"epochMillis":1789971324080,"method":"POST","uri":"/platform/mcp","pattern":"/**","moduleId":null,"status":404,"latencyMs":3,"error":null,"traceId":"cccc0000-0000-4000-8000-000000000003"},{"seq":2,"epochMillis":1789971283514,"method":"GET","uri":"/platform/modules","pattern":"/platform/modules","moduleId":null,"status":200,"latencyMs":0,"error":null,"traceId":"cccc0000-0000-4000-8000-000000000002"},{"seq":1,"epochMillis":1789971283503,"method":"GET","uri":"/platform/modules","pattern":"/platform/modules","moduleId":null,"status":200,"latencyMs":21,"error":null,"traceId":"cccc0000-0000-4000-8000-000000000001"}]
+
+event:metrics
+data:[]
+
+event:modules
+data:[{"id":"sample-data-access","version":"1","trustTier":"TRUSTED","desiredState":"ACTIVE","controllerFqcn":"sample.items.ItemController","mode":"in-process","needsSharedBeans":false,"bridgedInterfaces":null,"boundGeneration":0,"kind":"NORMAL","exports":[],"uses":[],"boundLibraryGenerations":[],"libraryGeneration":null,"scope":null,"runtimeId":"main"}]
+
+event:summary
+data:{"windowMs":60000,"count":3,"errorCount":0,"errorRate":0.0,"p50LatencyMs":0,"p95LatencyMs":3,"p99LatencyMs":3,"maxLatencyMs":3,"requestsDeltaPct":0.5,"errorRateDeltaPp":0.0,"p95DeltaMs":-18,"activeModules":1,"modulesByMode":{"in-process":1}}
+
+`
+
+/**
+ * Every connect sequence, for scenarios that must hold on any platform.
+ *
+ * `newestEpoch` is that fixture's newest trace, because "and then real traffic
+ * arrives" means newer than *this* capture — and the three were taken weeks
+ * apart. A scenario that loops over these must take the epoch from the row it is
+ * running, not from a single constant: the protean capture is three weeks newer
+ * than the other two, so one shared floor would make traffic "arrive" before the
+ * replay it follows on two of the three.
+ */
 export const PLATFORMS = [
-  { name: 'spring', connect: SPRING_CONNECT },
-  { name: 'go', connect: GO_CONNECT },
+  { name: 'protean', connect: PROTEAN_CONNECT, newestEpoch: 1789971324093 },
+  { name: 'spring', connect: SPRING_CONNECT, newestEpoch: 1788159685413 },
+  { name: 'go', connect: GO_CONNECT, newestEpoch: 1788161788025 },
 ] as const
 
 /**
@@ -79,5 +130,15 @@ export function traceFrame(seq: number, atMillis: number): string {
   ])
 }
 
-/** Newest epoch in a connect fixture — the floor for `traceFrame` timestamps. */
+/**
+ * Newest epoch in the **Go** capture — the floor for `traceFrame` timestamps in
+ * scenarios that replay `GO_CONNECT` alone.
+ *
+ * Deliberately not the newest of all three. Scenarios that seed synthetic history
+ * around this value and then assert which rows get evicted need that history to
+ * sit next to the replayed rows on the same timeline; anchoring it to a capture
+ * three weeks later would put every seeded row above every replayed one and quietly
+ * change what those tests are measuring (measured: two of them then failed). A
+ * scenario running against several platforms takes `newestEpoch` from `PLATFORMS`.
+ */
 export const FIXTURE_NEWEST_EPOCH = 1788161788025
