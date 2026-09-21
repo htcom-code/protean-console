@@ -1,6 +1,8 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LatencyChart } from '@/components/latency-chart'
+import { StatusMix } from '@/components/status-mix'
+import type { RequestTrace } from '@/lib/types'
 import { useConsoleUnderTest } from '@/test/console-driver'
 import { GO_CONNECT, SPRING_CONNECT } from '@/test/stream-fixtures'
 import { FakeEventSource, installFakeEventSource, replay } from '@/test/sse-stream'
@@ -97,5 +99,76 @@ describe.each([
     expect(svg.querySelector('polygon') === null).toBe(buckets < 2)
     // The newest sample is marked in both cases.
     expect(svg.querySelectorAll('circle').length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('latency chart with no samples', () => {
+  // This file has no automatic cleanup (the scenarios above keep their renders), so
+  // these unmount themselves — two charts in one DOM make every text query ambiguous.
+  afterEach(cleanup)
+
+  /**
+   * An idle platform is the normal state of a console someone just opened, and the
+   * card used to vanish on it — taking half of the row it shares with the status
+   * mix and leaving a layout that looked broken rather than quiet.
+   *
+   * The frame is drawn instead. What must not appear with it is a shape: a line,
+   * an area or a point would all be data this console never received.
+   */
+  it('draws the frame but nothing to read as data', () => {
+    const { container } = render(<LatencyChart series={[]} />)
+    const svg = container.querySelector('svg')
+    expect(svg).not.toBeNull()
+    expect(svg!.querySelector('polyline')).toBeNull()
+    expect(svg!.querySelector('polygon')).toBeNull()
+    expect(svg!.querySelector('circle'), 'marked a sample that does not exist').toBeNull()
+  })
+
+  it('says the scale is a default rather than a measurement', () => {
+    // The axis numbers are this console's choice, not the platform's data. Left
+    // unlabelled they read as a measured range — which is the lie the vanished
+    // card at least never told.
+    const { getByText } = render(<LatencyChart series={[]} />)
+    expect(getByText(/default scale/)).toBeTruthy()
+    expect(getByText('No samples in this window yet')).toBeTruthy()
+  })
+
+  it('goes back to the measured scale as soon as a sample lands', () => {
+    const { container, getByText, rerender } = render(<LatencyChart series={[]} />)
+    rerender(<LatencyChart series={[12, 40]} />)
+    expect(getByText(/rolling window/)).toBeTruthy()
+    expect(container.querySelector('polyline')).not.toBeNull()
+  })
+})
+
+describe('status mix', () => {
+  afterEach(cleanup)
+
+  /**
+   * The header count and the bar geometry were one number, and the `|| 1` that
+   * keeps a width from dividing by zero was also what the header printed: an idle
+   * platform read "1 req" beside four zeroes, which is a request that never
+   * happened.
+   */
+  it('counts no requests as none', () => {
+    const { getByText } = render(<StatusMix traces={[]} />)
+    expect(getByText('0 req')).toBeTruthy()
+  })
+
+  it('still counts what did arrive', () => {
+    const t = (status: number, seq: number): RequestTrace => ({
+      seq,
+      epochMillis: 1789971324000 + seq,
+      method: 'GET',
+      uri: '/x',
+      pattern: null,
+      moduleId: null,
+      status,
+      latencyMs: 1,
+      error: null,
+      traceId: `dddd${seq}`,
+    })
+    const { getByText } = render(<StatusMix traces={[t(200, 1), t(404, 2), t(500, 3)]} />)
+    expect(getByText('3 req')).toBeTruthy()
   })
 })

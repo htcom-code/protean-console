@@ -13,16 +13,50 @@ import {
 import { SettingsDialog } from '@/components/settings-dialog'
 import type { Settings } from '@/lib/settings'
 import { cn } from '@/lib/utils'
-import { platformOrigin, type ChannelStates, type ConnState } from '@/hooks/use-console-data'
+import { platformOrigin, type ChannelStates, type ConnState, type PlatformInfo } from '@/hooks/use-console-data'
 import type { StorageHealth } from '@/hooks/use-trace-store'
 
 type Tone = 'ok' | 'warn' | 'crit'
 type StatusView = { label: string; tone: Tone; ping: boolean; title: string; Icon?: ComponentType<{ className?: string }> }
 
-function statusView(conn: ConnState): StatusView {
+/**
+ * What the platform said it is, for the header line under the wordmark.
+ *
+ * Identity only — nothing on this screen branches on it. It is here because an
+ * operator watching one of several implementations of this contract cannot tell
+ * from the data alone which one answered, and a bare version number would not
+ * tell them either.
+ *
+ * A platform that sent no ack contributes nothing: the line stays the origin
+ * alone, rather than naming a platform we are guessing at. One that sent an ack
+ * without a readable version says so — `protean (version unknown)` is true, and a
+ * platform whose classes carry no version manifest is the platform's own
+ * documented answer, not a gap this console should paper over.
+ */
+function platformLine(platform: PlatformInfo | null): string {
+  const origin = platformOrigin()
+  if (!platform?.platform) return origin
+  return `${origin} · ${platform.platform} ${platform.platformVersion ?? '(version unknown)'}`
+}
+
+function statusView(conn: ConnState, platform: PlatformInfo | null): StatusView {
   switch (conn.status) {
-    case 'live':
-      return { label: 'LIVE · 200 buffer', tone: 'ok', ping: true, title: 'connected to a live platform' }
+    case 'live': {
+      // The buffer figure is the platform's `capacity` as of this connection, not a
+      // constant: it used to read "200 buffer" on every platform, which was this
+      // console asserting a ring size it had never been told and could not see. A
+      // platform that did not state one gets no claim at all.
+      const capacity = platform?.capacity
+      return {
+        label: capacity == null ? 'LIVE' : `LIVE · ${capacity} buffer`,
+        tone: 'ok',
+        ping: true,
+        title:
+          capacity == null
+            ? 'connected to a live platform'
+            : `connected to a live platform · retains up to ${capacity} traces`,
+      }
+    }
     case 'sample':
       return { label: 'SAMPLE DATA', tone: 'warn', ping: false, title: 'no platform reachable — showing sample data' }
     case 'disconnected':
@@ -72,6 +106,7 @@ export function TopBar({
   onToggleTheme,
   conn,
   channels,
+  platform,
   storage,
   settings,
   onSaveSettings,
@@ -82,12 +117,13 @@ export function TopBar({
   onToggleTheme: () => void
   conn: ConnState
   channels: ChannelStates
+  platform: PlatformInfo | null
   storage: StorageHealth
   settings: Settings
   onSaveSettings: (next: Settings) => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const s = statusView(conn)
+  const s = statusView(conn, platform)
   // Frames the platform sent that we could not read. Counted for the whole session,
   // not just the current run of them: a burst that recovered still happened, and a
   // number that resets itself is a number nobody can act on.
@@ -95,7 +131,7 @@ export function TopBar({
   const staleChannels = (Object.keys(channels) as Array<keyof ChannelStates>).filter((k) => channels[k].stale)
   return (
     <header className="flex flex-wrap items-center gap-3.5">
-      <BrandLockup subtitle={platformOrigin()} />
+      <BrandLockup subtitle={platformLine(platform)} />
 
       <span
         className={cn(

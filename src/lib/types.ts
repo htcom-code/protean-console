@@ -1,3 +1,30 @@
+/**
+ * Mirrors org.htcom.protean.web.StreamReady (SSE `ready` event).
+ *
+ * The connection acknowledgement: the first frame of every stream connection,
+ * ahead of the initial `trace` replay, and repeated on every reconnect. It exists
+ * because "the stream is open" and "the platform is actually running" look
+ * identical to a client on a quiet platform — nothing else arrives until traffic
+ * does.
+ *
+ * It carries only what a client must learn once, at connect time, and cannot
+ * derive from the stream afterwards. Everything that changes on a schedule stays
+ * in the `metrics` / `modules` / `summary` frames.
+ *
+ * `platform` is display and diagnostics only — the console must not branch its
+ * behaviour on which implementation answered. Later versions may add fields; the
+ * console ignores the ones it does not recognize.
+ */
+export interface StreamReady {
+  platform: string // implementation id, e.g. "protean" (Java), for display only
+  platformVersion: string | null // null when the platform cannot read its own version
+  tracesEnabled: boolean // protean.trace.enabled
+  metricsEnabled: boolean // protean.trace.metrics.enabled
+  buffered: number // rows the `trace` frame that follows carries — not the ring's size
+  tickMs: number // push period, the contract a silence watchdog sizes itself against
+  capacity: number // protean.trace.capacity as of this connection
+}
+
 // Mirrors org.htcom.protean.runtime.RequestTrace
 export interface RequestTrace {
   seq: number

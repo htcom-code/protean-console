@@ -84,10 +84,20 @@ export function shouldLoadOlder({
 export function TraceTable({
   store,
   staleReason,
+  tracesEnabled,
 }: {
   store: TraceStoreView
   /** Set when the trace channel has gone unreadable; shown in the header, never over the rows. */
   staleReason?: string | null
+  /**
+   * From the platform's `ready` ack; `null` when it sent none.
+   *
+   * An empty table says "requests appear here as the platform serves them". That
+   * is a promise, and on a platform with `protean.trace.enabled=false` it is one
+   * nothing will ever keep — no request is being recorded, so waiting is futile
+   * and the operator has no way to learn that from an empty table.
+   */
+  tracesEnabled?: boolean | null
 }) {
   const storageNote = storageReason(store.storage)
   // 🔴 The filter is not applied here. It is a query the store answers against the
@@ -234,9 +244,20 @@ export function TraceTable({
                 <EmptyMedia variant="icon">
                   <Inbox />
                 </EmptyMedia>
-                <EmptyTitle>No traces yet</EmptyTitle>
+                <EmptyTitle>{tracesEnabled === false ? 'Trace recording is off' : 'No traces yet'}</EmptyTitle>
                 <EmptyDescription>
-                  Requests appear here as the platform serves them, and are kept across reloads.
+                  {tracesEnabled === false ? (
+                    <>
+                      The platform reported{' '}
+                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">
+                        protean.trace.enabled=false
+                      </code>{' '}
+                      when this connection opened. Nothing is being recorded, so no request will appear here
+                      until it is turned on.
+                    </>
+                  ) : (
+                    <>Requests appear here as the platform serves them, and are kept across reloads.</>
+                  )}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>

@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Live SSE stream (`/platform/traces/stream`): a single connection multiplexes
   `trace` / `metrics` / `modules` / `summary` events pushed ~1×/s, with manual
   **Connect / Disconnect** stream control (`LIVE` / `PAUSED`).
+- Connection ack (`ready`): the platform states its identity and version, its
+  trace-ring `capacity`, whether traces/metrics are recording, and its push
+  period (`tickMs`) as the first frame of every connection. The header shows the
+  platform it is talking to and the real ring size, the module table says whether
+  metrics are off or merely idle instead of inferring it from an empty array, and
+  the silence watchdog is sized from the stated period rather than an assumed
+  1Hz. Platforms that send no ack are unchanged — the console reports what it was
+  not told as unknown.
 - Windowed header KPIs: the `summary` event drives the trend sub-lines (requests
   / error-rate / p95 vs the previous window) and the active-module split by
   isolation mode. Trend fields are nullable — a muted placeholder is shown
