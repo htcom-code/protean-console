@@ -84,7 +84,12 @@ export default function App() {
           aria-busy={disconnected}
         >
           <StalePanel reason={staleKpi}>
-            <KpiRow metrics={data.metrics} summary={data.summary} />
+            <KpiRow
+              metrics={data.metrics}
+              summary={data.summary}
+              metricsEnabled={platform?.metricsEnabled ?? null}
+              tracesEnabled={platform?.tracesEnabled ?? null}
+            />
           </StalePanel>
 
           <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.9fr_1fr]">
