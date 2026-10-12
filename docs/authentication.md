@@ -27,22 +27,27 @@ this is the part to get right:
 | Path | Where | Transport | Can send headers? |
 |---|---|---|---|
 | **SSE stream** (primary, live) | `src/hooks/use-console-data.ts` | `EventSource` | **No** |
-| **REST** (fallback + module-routes drawer) | `src/lib/api.ts` (`getJson`) | `fetch` | Yes |
+| **REST** (module-routes drawer) | `src/lib/api.ts` (`getJson`) | `fetch` | Yes |
 
 Wiring auth on the `fetch` path is easy; the SSE stream is the one that needs
 care, because `EventSource` cannot set an `Authorization` header.
 
 ## REST requests — the `getJson` choke point
 
-The REST fallback (`fetchSnapshot`) and the module-routes drawer
-(`getModuleRoutes`) both pass through **one** function: `getJson` in
-`src/lib/api.ts`. Add the credential here and both are covered.
+The only REST call the console makes today is the module-routes drawer
+(`getModuleRoutes`). It passes through **one** function, `getJson` in
+`src/lib/api.ts`, and so should any REST call added later. Add the credential
+here and every REST request is covered.
 
 ```
-fetchSnapshot ──▶ getJson(path) ──▶ fetch(`/platform${path}`, { headers })
+getModuleRoutes ──▶ getJson(path) ──▶ fetch(`/platform${path}`, { headers })
                                          ▲
                                          └── inject the auth header here
 ```
+
+`api.ts` also still exports `fetchSnapshot`, a REST snapshot left over from
+before the console moved to the stream. Nothing calls it, so it is not a
+fallback path and it does not need credentials.
 
 Introduce an **auth-header provider** — a `() => Record<string, string>`
 function — and have `getJson` merge its result into the request headers. To
@@ -74,7 +79,9 @@ these ways instead:
   `/platform` proxy, so a cookie set by the consuming app's Spring Security is
   sent automatically with no client change. Cross-origin (no proxy) needs
   `new EventSource(url, { withCredentials: true })` plus the platform's CORS
-  `Access-Control-Allow-Credentials: true`. No token handling in the client —
+  `Access-Control-Allow-Credentials: true`, and the cookie itself must be
+  `SameSite=None; Secure` — so a cross-origin cookie requires the platform to
+  be served over **HTTPS**. No token handling in the client —
   the cleanest fit, and it also covers the `fetch` path (send `credentials:
   'include'`).
 - **Query-param token.** Append `?access_token=…` to `STREAM_URL`. Simple, but
@@ -98,16 +105,26 @@ The Vite `/platform` proxy forwards request headers and cookies unchanged, so
 both an auth header (REST) and a session cookie (stream) reach the target
 without any proxy change.
 
+This applies to `npm run dev` only. `vite build` carries no proxy, so a
+production bundle sends `/platform` requests to the origin it is served from.
+Serve it from the platform's origin (or behind the same reverse proxy) to keep
+the same-origin cookie path, or take the cross-origin route above.
+
 ## Security rules
 
 - **Never bake a token into the build** — use runtime (`localStorage`) or a
   gitignored `.env` only.
 - On a **401/403 from the REST path**, do not silently fall back to sample data —
-  surface an explicit "auth required / token rejected" state in the top bar
-  (`fetchSnapshot` already classifies `auth` responses; the top bar reuses the
-  `LIVE` / `SAMPLE DATA` badge area). The SSE stream cannot make this
-  distinction (see above), so prefer a cookie scheme when you need the platform
-  to reject the console cleanly.
+  surface an explicit "auth required / token rejected" state. The display side
+  exists: a disconnected state with reason `auth` renders as `AUTH REQUIRED` /
+  `AUTH REJECTED` in the top bar badge and as a banner
+  (`src/components/top-bar.tsx`, `src/components/connection-banner.tsx`). But
+  **nothing produces that reason today** — the stream reports every failure as
+  `unreachable`, and the module-routes drawer reports a 401/403 as a generic
+  error. Wiring auth means classifying 401/403 on the REST path and feeding it
+  into that state. The SSE stream cannot make this distinction (see above), so
+  prefer a cookie scheme when you need the platform to reject the console
+  cleanly.
 - If you choose **OAuth2**, the redirect/callback route and token storage +
   refresh are a separate piece of work, not a header swap.
 
