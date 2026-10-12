@@ -103,4 +103,5 @@ export interface TraceQuery {
   beforeSeq?: number
 }
 
+// How far back the latency chart reaches, ending now. A setting (`pc:chartRange`).
 export type TimeRange = '5m' | '15m' | '1h' | '6h'

@@ -9,7 +9,15 @@ const BUCKETS = [
   { key: '5xx', label: 'Server err', color: 'var(--crit)', test: (s: number) => s >= 500 },
 ]
 
-/** Status-code distribution over the sampled traces — magnitude bars, one hue per status. */
+/**
+ * Status-code distribution over the traces held in memory — magnitude bars, one
+ * hue per status.
+ *
+ * That is a count of the most recent rows, not a time window, and the header says
+ * so ("last N req"). `summary` carries no per-status split, so a time window here
+ * would mean solving the trace window's problem again; naming what the count is
+ * costs nothing and stops "500 req" reading as all the traffic there was.
+ */
 export function StatusMix({ traces }: { traces: RequestTrace[] }) {
   const counts = BUCKETS.map((b) => ({ ...b, n: traces.filter((t) => b.test(t.status)).length }))
   const total = counts.reduce((a, b) => a + b.n, 0)
@@ -22,7 +30,9 @@ export function StatusMix({ traces }: { traces: RequestTrace[] }) {
     <Card className="gap-0">
       <CardHeader className="flex items-baseline justify-between pb-2">
         <CardTitle className="text-[13.5px] font-semibold">Status mix</CardTitle>
-        <span className="font-mono text-[11px] text-muted-foreground">{num(total)} req</span>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {total === 0 ? '0 req' : `last ${num(total)} req`}
+        </span>
       </CardHeader>
       <div className="flex flex-col gap-3 px-4 pb-4 pt-1.5">
         {counts.map((b) => (

@@ -25,9 +25,10 @@ export function useSettings(): { settings: Settings; save: (next: Settings) => v
   useEffect(
     () =>
       subscribeStored(SETTINGS_KEYS, () => {
-        // A save writes four keys and arrives here as up to four events. Each reloads
-        // all four, so the tab converges on the last; one that changes nothing keeps
-        // the old identity, or every consumer keyed on `settings` would run again.
+        // A save writes one key per setting and arrives here as one event per key.
+        // Each reloads them all, so the tab converges on the last; one that changes
+        // nothing keeps the old identity, or every consumer keyed on `settings` would
+        // run again.
         const next = loadSettings()
         setSettings((prev) => (sameSettings(prev, next) ? prev : next))
       }),

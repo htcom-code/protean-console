@@ -127,6 +127,7 @@ describe('saving', () => {
     retype('Load-older page size', '25')
     retype('Sample-data delay', '1200')
     fireEvent.click(screen.getByRole('button', { name: '4×' }))
+    fireEvent.click(screen.getByRole('button', { name: '6h' }))
     click('Save')
 
     await waitFor(() =>
@@ -135,6 +136,7 @@ describe('saving', () => {
         evictionFactor: 4,
         pageSize: 25,
         sampleDelayMs: 1_200,
+        chartRange: '6h',
       }),
     )
   })
@@ -160,7 +162,7 @@ describe('saving', () => {
 
 describe('cancelling', () => {
   it('leaves storage exactly as it was', async () => {
-    const stored: Settings = { retention: 70_000, evictionFactor: 8, pageSize: 10, sampleDelayMs: 900 }
+    const stored: Settings = { retention: 70_000, evictionFactor: 8, pageSize: 10, sampleDelayMs: 900, chartRange: '1h' }
     saveSettings(stored)
 
     render(<Harness initial={stored} />)
@@ -191,7 +193,7 @@ describe('cancelling', () => {
 
 describe('reset to defaults', () => {
   it('fills the form without saving anything by itself', async () => {
-    const stored: Settings = { retention: 70_000, evictionFactor: 8, pageSize: 10, sampleDelayMs: 900 }
+    const stored: Settings = { retention: 70_000, evictionFactor: 8, pageSize: 10, sampleDelayMs: 900, chartRange: '1h' }
     saveSettings(stored)
 
     render(<Harness initial={stored} />)

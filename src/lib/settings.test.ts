@@ -18,7 +18,7 @@ import {
  * out, prunes with `NaN` and does it silently.
  */
 
-const KEYS = ['pc:retention', 'pc:evictionFactor', 'pc:pageSize', 'pc:sampleDelayMs']
+const KEYS = ['pc:retention', 'pc:evictionFactor', 'pc:pageSize', 'pc:sampleDelayMs', 'pc:chartRange']
 
 beforeEach(() => {
   for (const k of KEYS) window.localStorage.removeItem(k)
@@ -61,7 +61,7 @@ describe('what a setting is allowed to be', () => {
 
 describe('what comes back out of storage', () => {
   it('round-trips a saved set', () => {
-    const mine: Settings = { retention: 120_000, evictionFactor: 4, pageSize: 50, sampleDelayMs: 1_000 }
+    const mine: Settings = { retention: 120_000, evictionFactor: 4, pageSize: 50, sampleDelayMs: 1_000, chartRange: '6h' }
     saveSettings(mine)
     expect(loadSettings()).toEqual(mine)
   })
@@ -78,16 +78,18 @@ describe('what comes back out of storage', () => {
     window.localStorage.setItem('pc:retention', '"lots"')
     window.localStorage.setItem('pc:evictionFactor', '3')
     window.localStorage.setItem('pc:pageSize', '0')
+    window.localStorage.setItem('pc:chartRange', '"2h"') // not a range the chart offers
 
     const loaded = loadSettings()
     expect(loaded.retention).toBe(DEFAULT_SETTINGS.retention)
     expect(loaded.evictionFactor).toBe(DEFAULT_SETTINGS.evictionFactor)
     expect(loaded.pageSize).toBe(DEFAULT_SETTINGS.pageSize)
+    expect(loaded.chartRange).toBe(DEFAULT_SETTINGS.chartRange)
     expect(Number.isFinite(loaded.retention)).toBe(true)
   })
 
   it('keeps the fields that are still usable when one is corrupt', () => {
-    saveSettings({ retention: 90_000, evictionFactor: 8, pageSize: 20, sampleDelayMs: 800 })
+    saveSettings({ retention: 90_000, evictionFactor: 8, pageSize: 20, sampleDelayMs: 800, chartRange: '5m' })
     window.localStorage.setItem('pc:pageSize', 'null')
 
     const loaded = loadSettings()
@@ -95,6 +97,7 @@ describe('what comes back out of storage', () => {
     expect(loaded.retention).toBe(90_000)
     expect(loaded.evictionFactor).toBe(8)
     expect(loaded.sampleDelayMs).toBe(800)
+    expect(loaded.chartRange).toBe('5m')
   })
 
   it('survives a below-floor retention left over from an earlier build', () => {

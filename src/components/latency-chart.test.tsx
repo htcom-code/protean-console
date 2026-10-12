@@ -1,112 +1,316 @@
-import { act, cleanup, render, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { act, cleanup, render, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { KpiRow } from '@/components/kpi-row'
 import { LatencyChart } from '@/components/latency-chart'
 import { StatusMix } from '@/components/status-mix'
-import type { RequestTrace } from '@/lib/types'
-import { useConsoleUnderTest } from '@/test/console-driver'
-import { GO_CONNECT, SPRING_CONNECT } from '@/test/stream-fixtures'
-import { FakeEventSource, installFakeEventSource, replay } from '@/test/sse-stream'
-import { clearTraces } from '@/lib/trace-db'
+import { useConsoleData } from '@/hooks/use-console-data'
+import { appendPoint, RANGE_MS, segments, SERIES_SPAN_MS, type LatencyPoint } from '@/lib/latency-series'
+import { mockLatencySeries } from '@/lib/mock'
+import { DEFAULT_SETTINGS } from '@/lib/settings'
+import type { ModuleMetricsSnapshot, RequestTrace, TraceSummary } from '@/lib/types'
+import { PLATFORMS, PROTEAN_CONNECT, traceFrame } from '@/test/stream-fixtures'
+import { FakeEventSource, installFakeEventSource, parseStream, replay } from '@/test/sse-stream'
 
 /**
- * The chart is driven by whatever `deriveP95` buckets out of the live window, so
- * the shape of the series is not a free parameter — it follows from the traffic
- * the platform sent. These scenarios feed real connect sequences and assert the
- * rendered geometry, because the failure mode was invalid SVG rather than a wrong
- * number: coordinates came out `NaN` and the browser rejected the marks outright,
- * leaving an empty card and a console full of errors.
+ * The latency chart plots the platform's windowed p95 — one point per `summary`
+ * frame received on this page — on a time axis that ends now.
  *
- * The two fixtures land on either side of the boundary, which is why both run:
- * the Go capture's traces share one minute (one bucket, no span to interpolate
- * across), the Spring capture's straddle two.
+ * It used to bucket the in-memory trace window (500 rows) per minute. The time
+ * those rows covered shrank with load, and during a 4,000-request burst the chart
+ * was a single dot. The scenarios below pin the replacement against the same
+ * failure: traffic of any size must not shrink the chart, the connect dump must
+ * not reach it, and silence must look like silence.
  */
 
-function Harness() {
-  const { data } = useConsoleUnderTest()
-  return data ? <LatencyChart series={data.latencyP95} /> : null
+/** Chart geometry, mirrored from latency-chart.tsx. */
+const W = 720
+const PAD_L = 30
+const PAD_R = 10
+const PLOT_W = W - PAD_L - PAD_R
+
+const T0 = 1_790_000_000_000
+
+/** A run of points `tickMs` apart, starting at `from`. */
+function run(from: number, count: number, tickMs = 1000, p95 = 20): LatencyPoint[] {
+  return Array.from({ length: count }, (_, i) => ({ at: from + i * tickMs, p95: p95 + i, tickMs }))
 }
 
-let restoreEventSource: () => void
+/** The summary frame a fixture carries, as the platform sent it. */
+function summaryOf(connect: string): TraceSummary {
+  return JSON.parse(parseStream(connect).find((f) => f.event === 'summary')!.data) as TraceSummary
+}
 
-beforeEach(async () => {
-  restoreEventSource = installFakeEventSource()
-  await clearTraces()
-})
+function summaryFrame(p95: number): string {
+  return JSON.stringify({ ...summaryOf(PROTEAN_CONNECT), p95LatencyMs: p95 })
+}
 
-afterEach(() => {
-  restoreEventSource()
-})
+function lines(container: HTMLElement): number {
+  return container.querySelectorAll('polyline').length
+}
 
-describe.each([
-  { name: 'one bucket (Go capture — all traces inside one minute)', connect: GO_CONNECT, buckets: 1 },
-  { name: 'two buckets (Spring capture — traces straddle a minute)', connect: SPRING_CONNECT, buckets: 2 },
-])('latency chart, $name', ({ connect, buckets }) => {
-  it('renders valid coordinates', async () => {
-    const { container } = render(<Harness />)
+function newestX(container: HTMLElement): number {
+  return Number(container.querySelector('circle[data-newest]')!.getAttribute('cx'))
+}
 
-    // ① nothing rendered before the stream delivers — the marks asserted below
-    //    can only come from the replayed traffic.
-    expect(container.querySelector('svg')).toBeNull()
+afterEach(cleanup)
 
-    await act(async () => {
-      const es = FakeEventSource.current()
-      es.emit('open')
-      replay(es, connect)
-    })
-
-    const svg = await waitFor(() => {
-      const found = container.querySelector('svg')
-      expect(found).not.toBeNull()
-      return found!
-    })
-
-    // The series really is the width this scenario claims to cover.
-    const polyline = svg.querySelector('polyline')
-    const pointCount = polyline ? polyline.getAttribute('points')!.trim().split(/\s+/).length : 1
-    expect(pointCount).toBe(buckets)
-
-    // Every coordinate the browser has to parse is a number.
-    expect(svg.outerHTML).not.toContain('NaN')
-    for (const el of svg.querySelectorAll('polyline, polygon')) {
-      for (const pair of el.getAttribute('points')!.trim().split(/\s+/)) {
-        const [x, y] = pair.split(',').map(Number)
-        expect(Number.isFinite(x)).toBe(true)
-        expect(Number.isFinite(y)).toBe(true)
-      }
-    }
-    for (const el of svg.querySelectorAll('circle')) {
-      expect(Number.isFinite(Number(el.getAttribute('cx')))).toBe(true)
-      expect(Number.isFinite(Number(el.getAttribute('cy')))).toBe(true)
-    }
+describe.each(PLATFORMS)('on connect to $name', ({ connect, newestEpoch }) => {
+  let restoreEventSource: () => void
+  beforeEach(() => {
+    restoreEventSource = installFakeEventSource()
+    // Seconds after the dump's newest trace, so its rows sit well inside the span
+    // the series holds: if they reached it, nothing would age them out first.
+    vi.useFakeTimers()
+    vi.setSystemTime(newestEpoch + 2_000)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    restoreEventSource()
   })
 
-  it('draws a line only when there are two points to join', async () => {
-    // With a single bucket there is no line and no area: filling from a zero
-    // baseline would draw a ramp the data never measured.
-    const { container } = render(<Harness />)
-    await act(async () => {
+  it('plots the summary the platform sent, and nothing from the trace dump', () => {
+    // The dump is seconds of traffic from before this page connected. It used to
+    // become the chart's first points, drawn under "over time"; now only the
+    // windowed p95 the platform reports does.
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
       const es = FakeEventSource.current()
       es.emit('open')
       replay(es, connect)
     })
-    const svg = await waitFor(() => {
-      const found = container.querySelector('svg')
-      expect(found).not.toBeNull()
-      return found!
-    })
+    const latency = result.current.data!.latency
+    expect(latency).toHaveLength(1)
+    expect(latency[0].p95).toBe(summaryOf(connect).p95LatencyMs)
+  })
+})
 
-    expect(svg.querySelector('polyline') === null).toBe(buckets < 2)
-    expect(svg.querySelector('polygon') === null).toBe(buckets < 2)
-    // The newest sample is marked in both cases.
-    expect(svg.querySelectorAll('circle').length).toBeGreaterThanOrEqual(1)
+describe('the series the stream builds', () => {
+  let restoreEventSource: () => void
+  beforeEach(() => {
+    restoreEventSource = installFakeEventSource()
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    restoreEventSource()
+  })
+
+  function connected() {
+    const hook = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, PROTEAN_CONNECT)
+    })
+    return hook
+  }
+
+  /** One platform tick: a second passes and a summary arrives. */
+  function tick(p95: number) {
+    act(() => {
+      vi.advanceTimersByTime(1000)
+      FakeEventSource.current().emit('summary', summaryFrame(p95))
+    })
+  }
+
+  it('stays a line through a burst that used to collapse it to a dot', () => {
+    // 🔴 The failure this replaces: 600 traces inside one second filled the
+    // 500-row window with a single minute, and the chart drew one dot.
+    const { result } = connected()
+    for (let s = 1; s <= 5; s++) {
+      act(() => {
+        const es = FakeEventSource.current()
+        for (let i = 0; i < 120; i++) es.emit('trace', traceFrame(s * 1000 + i, T0 + s * 1000 + i))
+      })
+      tick(10 + s)
+    }
+    const latency = result.current.data!.latency
+    expect(latency).toHaveLength(6) // the connect summary + one per tick, whatever the traffic
+
+    const { container } = render(<LatencyChart points={latency} range="15m" now={Date.now()} />)
+    expect(lines(container)).toBe(1)
+    expect(container.querySelector('polyline')!.getAttribute('points')!.trim().split(/\s+/)).toHaveLength(6)
+  })
+
+  it('stamps each point with the tick the platform stated', () => {
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      es.emit('ready', JSON.stringify({ platform: 'protean', tickMs: 5000, capacity: 200 }))
+      es.emit('summary', summaryFrame(7))
+    })
+    expect(result.current.data!.latency[0].tickMs).toBe(5000)
+  })
+
+  it('falls back to the assumed 1 Hz for a platform that states no tick', () => {
+    const { result } = renderHook(() => useConsoleData())
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      es.emit('summary', summaryFrame(7))
+    })
+    expect(result.current.data!.latency[0].tickMs).toBe(1000)
+  })
+
+  it('adds no point for a p95 that is not a number', () => {
+    const { result } = connected()
+    act(() => {
+      FakeEventSource.current().emit('summary', JSON.stringify({ ...summaryOf(PROTEAN_CONNECT), p95LatencyMs: 'n/a' }))
+    })
+    expect(result.current.data!.latency).toHaveLength(1)
+  })
+
+  it('keeps the series across a reconnect, with the outage as a break', () => {
+    // Page-scoped, not connection-scoped: a dropped stream must not start the
+    // chart over, and the time it was gone must not be joined up.
+    const { result } = connected()
+    tick(4)
+    tick(5)
+    act(() => {
+      vi.advanceTimersByTime(6_000) // silence past the 6 s window: the watchdog drops the stream
+    })
+    act(() => {
+      vi.advanceTimersByTime(5_000) // and rebuilds it after the reconnect delay
+    })
+    act(() => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, PROTEAN_CONNECT)
+    })
+    tick(6)
+
+    const latency = result.current.data!.latency
+    expect(latency).toHaveLength(5)
+    expect(segments(latency).map((r) => r.length)).toEqual([3, 2])
+  })
+})
+
+describe('the time axis', () => {
+  it('ends at now, so the newest point sits on the right edge while data flows', () => {
+    const points = run(T0, 10)
+    const { container } = render(<LatencyChart points={points} range="15m" now={T0 + 9_000} />)
+    expect(newestX(container)).toBeCloseTo(W - PAD_R)
+  })
+
+  it('slides the line left when the stream goes quiet', () => {
+    // 🔴 Anchored to the last point, a frozen chart looks exactly like a live one.
+    const points = run(T0, 10)
+    const quiet = 5 * 60_000
+    const { container } = render(<LatencyChart points={points} range="15m" now={T0 + 9_000 + quiet} />)
+    const expected = PAD_L + ((RANGE_MS['15m'] - quiet) / RANGE_MS['15m']) * PLOT_W
+    expect(newestX(container)).toBeCloseTo(expected)
+  })
+
+  it('goes back to the empty frame once everything has aged out of the range', () => {
+    const points = run(T0, 10)
+    const { container, getByText } = render(
+      <LatencyChart points={points} range="15m" now={T0 + RANGE_MS['15m'] + 60_000} />,
+    )
+    expect(getByText('No samples in this window yet')).toBeTruthy()
+    expect(container.querySelector('polyline')).toBeNull()
+  })
+
+  it('draws only what exists before the range has filled', () => {
+    // Connected for a minute with a 15-minute range: the line covers the right
+    // fifteenth and the rest stays empty, which is what says how much there is.
+    const points = run(T0, 61)
+    const { container } = render(<LatencyChart points={points} range="15m" now={T0 + 60_000} />)
+    const xs = container
+      .querySelector('polyline')!
+      .getAttribute('points')!
+      .trim()
+      .split(/\s+/)
+      .map((p) => Number(p.split(',')[0]))
+    expect(Math.min(...xs)).toBeCloseTo(PAD_L + (14 / 15) * PLOT_W)
+    expect(Math.max(...xs)).toBeCloseTo(W - PAD_R)
+  })
+
+  it('shows more of what it holds when the range is widened', () => {
+    // An hour of points: a 15-minute range shows the last quarter of them, an
+    // hour shows them all — nothing was thrown away by the narrower choice.
+    const points = run(T0, 3600)
+    const now = T0 + 3599_000
+    const count = (range: '15m' | '1h') => {
+      const { container, unmount } = render(<LatencyChart points={points} range={range} now={now} />)
+      const n = container.querySelector('polyline')!.getAttribute('points')!.trim().split(/\s+/).length
+      unmount()
+      return n
+    }
+    expect(count('15m')).toBe(901)
+    expect(count('1h')).toBe(3600)
+  })
+
+  it('names the range on the axis', () => {
+    const { getByText } = render(<LatencyChart points={run(T0, 3)} range="1h" now={T0 + 2_000} />)
+    expect(getByText('−1h')).toBeTruthy()
+    expect(getByText('now')).toBeTruthy()
+  })
+})
+
+describe('gaps', () => {
+  it('breaks the line where points are further apart than two ticks', () => {
+    const points = [...run(T0, 5), ...run(T0 + 30_000, 5)]
+    const { container } = render(<LatencyChart points={points} range="15m" now={T0 + 34_000} />)
+    expect(lines(container)).toBe(2)
+  })
+
+  it('does not break it for a frame that is merely late', () => {
+    // 1.9 s apart on a 1 s tick is jitter, not an outage.
+    const points = [...run(T0, 5), ...run(T0 + 5_900, 5)]
+    const { container } = render(<LatencyChart points={points} range="15m" now={T0 + 9_900} />)
+    expect(lines(container)).toBe(1)
+  })
+
+  it('judges the gap by the tick each point was promised', () => {
+    // A 5 s platform: 8 s between frames is within two of its ticks.
+    expect(segments([...run(T0, 3, 5000), ...run(T0 + 18_000, 3, 5000)])).toHaveLength(1)
+    expect(segments([...run(T0, 3, 1000), ...run(T0 + 10_000, 3, 1000)])).toHaveLength(2)
+  })
+
+  it('draws a lone point between two gaps as a dot, not a ramp', () => {
+    const points = [...run(T0, 3), { at: T0 + 20_000, p95: 9, tickMs: 1000 }, ...run(T0 + 40_000, 3)]
+    const { container } = render(<LatencyChart points={points} range="15m" now={T0 + 42_000} />)
+    expect(lines(container)).toBe(2)
+    expect(container.querySelectorAll('polygon')).toHaveLength(2)
+  })
+})
+
+describe('the held series', () => {
+  it('keeps six hours whatever range is selected, and no more', () => {
+    let series: LatencyPoint[] = []
+    const first = { at: T0, p95: 1, tickMs: 1000 }
+    series = appendPoint(series, first)
+    series = appendPoint(series, { at: T0 + SERIES_SPAN_MS, p95: 2, tickMs: 1000 })
+    expect(series).toContain(first) // exactly six hours old: still held
+    series = appendPoint(series, { at: T0 + SERIES_SPAN_MS + 1, p95: 3, tickMs: 1000 })
+    expect(series).not.toContain(first)
+    expect(series).toHaveLength(2)
+  })
+
+  it('defaults to a 15-minute range', () => {
+    expect(DEFAULT_SETTINGS.chartRange).toBe('15m')
+  })
+})
+
+describe('what the header says', () => {
+  it('names the window each point is a p95 of, and the cap on its sample', () => {
+    // Each point is smoothed over the platform's window and, under load, drawn
+    // from at most `capacity` traces. Both change how the curve should be read.
+    const { getByText } = render(
+      <LatencyChart points={run(T0, 3)} range="15m" now={T0 + 2_000} windowMs={60_000} capacity={200} />,
+    )
+    expect(getByText('ms · p95 of 60s · ≤200 traces')).toBeTruthy()
+  })
+
+  it('leaves out what the platform did not state', () => {
+    const { getByText } = render(<LatencyChart points={run(T0, 3)} range="15m" now={T0 + 2_000} windowMs={60_000} />)
+    expect(getByText('ms · p95 of 60s')).toBeTruthy()
   })
 })
 
 describe('latency chart with no samples', () => {
-  // This file has no automatic cleanup (the scenarios above keep their renders), so
-  // these unmount themselves — two charts in one DOM make every text query ambiguous.
-  afterEach(cleanup)
-
   /**
    * An idle platform is the normal state of a console someone just opened, and the
    * card used to vanish on it — taking half of the row it shares with the status
@@ -116,7 +320,7 @@ describe('latency chart with no samples', () => {
    * an area or a point would all be data this console never received.
    */
   it('draws the frame but nothing to read as data', () => {
-    const { container } = render(<LatencyChart series={[]} />)
+    const { container } = render(<LatencyChart points={[]} range="15m" now={T0} />)
     const svg = container.querySelector('svg')
     expect(svg).not.toBeNull()
     expect(svg!.querySelector('polyline')).toBeNull()
@@ -125,55 +329,83 @@ describe('latency chart with no samples', () => {
   })
 
   it('says the scale is a default rather than a measurement', () => {
-    // The axis numbers are this console's choice, not the platform's data. Left
-    // unlabelled they read as a measured range — which is the lie the vanished
-    // card at least never told.
-    const { getByText } = render(<LatencyChart series={[]} />)
+    const { getByText } = render(<LatencyChart points={[]} range="15m" now={T0} />)
     expect(getByText(/default scale/)).toBeTruthy()
     expect(getByText('No samples in this window yet')).toBeTruthy()
   })
 
   it('goes back to the measured scale as soon as a sample lands', () => {
-    const { container, getByText, rerender } = render(<LatencyChart series={[]} />)
-    rerender(<LatencyChart series={[12, 40]} />)
-    expect(getByText(/rolling window/)).toBeTruthy()
+    const { container, queryByText, rerender } = render(<LatencyChart points={[]} range="15m" now={T0} />)
+    rerender(<LatencyChart points={run(T0, 2)} range="15m" now={T0 + 1_000} windowMs={60_000} />)
+    expect(queryByText(/default scale/)).toBeNull()
     expect(container.querySelector('polyline')).not.toBeNull()
   })
 })
 
 describe('latency chart on sample data', () => {
-  afterEach(cleanup)
-
   /**
    * With no platform the console draws a generated curve. The top bar says SAMPLE
-   * DATA, but this header said "rolling window" — a claim about where the numbers
-   * came from that a generated curve cannot make. The header has to say it instead.
+   * DATA, and the chart's header says it too: a generated curve is not a window
+   * onto anything.
    */
-  it('says the curve is sample data, not a window', () => {
-    const { getByText, queryByText, getByRole } = render(<LatencyChart series={[34, 41, 38]} sample />)
+  it('says the curve is sample data', () => {
+    const { getByText, getByRole } = render(<LatencyChart points={mockLatencySeries(T0)} range="15m" sample />)
     expect(getByText(/sample data/)).toBeTruthy()
-    expect(queryByText(/rolling window/), 'a generated curve claimed to be a window').toBeNull()
     expect(getByRole('img').getAttribute('aria-label')).toMatch(/sample data/)
   })
 
-  it('still draws the curve, so the demo stays explorable', () => {
-    // Every other card shows sample values too; an empty chart beside them would
-    // single this one out without making the screen any more honest.
-    const { container } = render(<LatencyChart series={[34, 41, 38]} sample />)
-    expect(container.querySelector('polyline')).not.toBeNull()
+  it('fills every range, and stays put rather than sliding away with the clock', () => {
+    // Generated long before "now": anchored to the clock it would have slid out of
+    // view and left the demo empty.
+    for (const range of ['5m', '6h'] as const) {
+      const { container, unmount } = render(<LatencyChart points={mockLatencySeries(T0)} range={range} sample />)
+      expect(lines(container)).toBe(1)
+      expect(newestX(container)).toBeCloseTo(W - PAD_R)
+      const first = Number(container.querySelector('polyline')!.getAttribute('points')!.split(',')[0])
+      expect(first).toBeCloseTo(PAD_L)
+      unmount()
+    }
   })
 
   it('drops the label once real samples replace it', () => {
-    const { getByText, queryByText, rerender } = render(<LatencyChart series={[34, 41, 38]} sample />)
-    rerender(<LatencyChart series={[12, 40]} />)
-    expect(getByText(/rolling window/)).toBeTruthy()
+    const { queryByText, rerender } = render(<LatencyChart points={mockLatencySeries(T0)} range="15m" sample />)
+    rerender(<LatencyChart points={run(T0, 2)} range="15m" now={T0 + 1_000} />)
     expect(queryByText(/sample data/)).toBeNull()
   })
 })
 
-describe('status mix', () => {
-  afterEach(cleanup)
+describe('the p95 tile', () => {
+  const metrics: ModuleMetricsSnapshot[] = [
+    {
+      moduleId: 'slow',
+      count: 10,
+      errorCount: 0,
+      errorRate: 0,
+      p50LatencyMs: 400,
+      p95LatencyMs: 900,
+      p99LatencyMs: 950,
+      maxLatencyMs: 990,
+      lastSeenEpochMillis: T0,
+    },
+  ]
 
+  it('shows the windowed p95 the chart plots, not the worst module', () => {
+    // The tile used to print the worst per-module p95 (900 here) beside a chart
+    // that plotted something else; now it reads as the chart's newest point.
+    const { getByText, queryByText } = render(<KpiRow metrics={metrics} summary={summaryOf(PROTEAN_CONNECT)} />)
+    expect(getByText('3')).toBeTruthy()
+    expect(queryByText('900')).toBeNull()
+  })
+
+  it('shows a dash until a summary arrives, rather than a different measurement', () => {
+    const { getAllByText, queryByText } = render(<KpiRow metrics={metrics} summary={null} />)
+    expect(queryByText('900')).toBeNull()
+    expect(getAllByText('—').length).toBeGreaterThan(0)
+    expect(queryByText('no summary yet')).toBeTruthy()
+  })
+})
+
+describe('status mix', () => {
   /**
    * The header count and the bar geometry were one number, and the `|| 1` that
    * keeps a width from dividing by zero was also what the header printed: an idle
@@ -185,7 +417,7 @@ describe('status mix', () => {
     expect(getByText('0 req')).toBeTruthy()
   })
 
-  it('still counts what did arrive', () => {
+  it('says the count is of the latest requests, not of all traffic', () => {
     const t = (status: number, seq: number): RequestTrace => ({
       seq,
       epochMillis: 1789971324000 + seq,
@@ -199,6 +431,6 @@ describe('status mix', () => {
       traceId: `dddd${seq}`,
     })
     const { getByText } = render(<StatusMix traces={[t(200, 1), t(404, 2), t(500, 3)]} />)
-    expect(getByText('3 req')).toBeTruthy()
+    expect(getByText('last 3 req')).toBeTruthy()
   })
 })

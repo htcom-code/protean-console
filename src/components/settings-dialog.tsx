@@ -21,15 +21,24 @@ import {
   type Settings,
 } from '@/lib/settings'
 import { num } from '@/lib/format'
+import { TIME_RANGES } from '@/lib/latency-series'
+import type { TimeRange } from '@/lib/types'
 
 /** Draft values are strings so a half-typed number is not silently coerced. */
-type Draft = { retention: string; evictionFactor: EvictionFactor; pageSize: string; sampleDelayMs: string }
+type Draft = {
+  retention: string
+  evictionFactor: EvictionFactor
+  pageSize: string
+  sampleDelayMs: string
+  chartRange: TimeRange
+}
 
 const toDraft = (s: Settings): Draft => ({
   retention: String(s.retention),
   evictionFactor: s.evictionFactor,
   pageSize: String(s.pageSize),
   sampleDelayMs: String(s.sampleDelayMs),
+  chartRange: s.chartRange,
 })
 
 export function SettingsDialog({
@@ -83,6 +92,7 @@ function SettingsForm({
       evictionFactor: draft.evictionFactor,
       pageSize: Number(draft.pageSize),
       sampleDelayMs: Number(draft.sampleDelayMs),
+      chartRange: draft.chartRange,
     })
     onDone()
   }
@@ -189,6 +199,35 @@ function SettingsForm({
               {BOUNDS.sampleDelayMs.min}&ndash;{num(BOUNDS.sampleDelayMs.max)}.
             </FieldDescription>
           )}
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="pc-chart-range">Latency chart range</FieldLabel>
+          <ToggleGroup
+            id="pc-chart-range"
+            spacing={0}
+            value={[draft.chartRange]}
+            onValueChange={(next) => {
+              // Single-select, as above: clicking the pressed item again keeps it.
+              const picked = next[0] as TimeRange | undefined
+              if (picked) setDraft((d) => ({ ...d, chartRange: picked }))
+            }}
+          >
+            {TIME_RANGES.map((r) => (
+              <ToggleGroupItem
+                key={r}
+                value={r}
+                variant="outline"
+                className="flex-1 font-mono aria-pressed:border-brand/40 aria-pressed:bg-brand/15 aria-pressed:text-brand"
+              >
+                {r}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <FieldDescription>
+            How far back the chart reaches, ending now. It only holds what arrived since this page connected, so a
+            longer range fills in as the page stays open.
+          </FieldDescription>
         </Field>
       </FieldGroup>
 

@@ -88,8 +88,15 @@ export default function App() {
           </StalePanel>
 
           <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.9fr_1fr]">
-            <StalePanel reason={staleTraceDerived}>
-              <LatencyChart series={data.latencyP95} sample={conn.status === 'sample'} />
+            {/* Fed by `summary`, not by traces: dimmed with the KPI tiles it agrees with. */}
+            <StalePanel reason={staleReason(channels, ['summary'])}>
+              <LatencyChart
+                points={data.latency}
+                range={settings.chartRange}
+                sample={conn.status === 'sample'}
+                windowMs={data.summary?.windowMs ?? null}
+                capacity={platform?.capacity ?? null}
+              />
             </StalePanel>
             <StalePanel reason={staleTraceDerived}>
               <StatusMix traces={data.traces} />
