@@ -50,14 +50,21 @@ describe('settings changed in another tab', () => {
   })
 
   it('arrive whole, one key per event', () => {
-    // A save writes four keys; this tab may see the events before every write has
+    // A save writes one key per setting; this tab may see the events before every write has
     // landed. Each event re-reads everything, so the last one leaves the full set.
     const { result } = renderHook(() => useSettings())
     otherTab('pc:retention', 80_000)
     otherTab('pc:evictionFactor', 4)
     otherTab('pc:pageSize', 500)
     otherTab('pc:sampleDelayMs', 9_000)
-    expect(result.current.settings).toEqual({ retention: 80_000, evictionFactor: 4, pageSize: 500, sampleDelayMs: 9_000 })
+    otherTab('pc:chartRange', '1h')
+    expect(result.current.settings).toEqual({
+      retention: 80_000,
+      evictionFactor: 4,
+      pageSize: 500,
+      sampleDelayMs: 9_000,
+      chartRange: '1h',
+    })
   })
 
   it('leave the settings object alone when nothing changed', () => {

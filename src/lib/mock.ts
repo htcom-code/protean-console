@@ -1,3 +1,4 @@
+import { SERIES_SPAN_MS, type LatencyPoint } from './latency-series'
 import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, TraceSummary } from './types'
 
 // Deterministic PRNG so the demo data is stable across renders/screenshots.
@@ -140,14 +141,19 @@ export function mockSummary(): TraceSummary {
   }
 }
 
-// p95 latency series for the main chart (one point/minute).
-export function mockLatencySeries(points = 60): number[] {
+// p95 latency series for the main chart: one point every 15s for the six hours the
+// page can hold, ending at `now`, so every range the chart offers is full. The
+// chart labels it sample data and does not slide it with the clock.
+const SAMPLE_TICK_MS = 15_000
+
+export function mockLatencySeries(now: number): LatencyPoint[] {
   const rnd = makeRng(90210)
-  const out: number[] = []
-  for (let i = 0; i < points; i++) {
-    const base = 34 + Math.sin(i / 7) * 7 + rnd() * 9
-    const spike = i === 41 || i === 42 ? 60 : i === 53 ? 30 : 0
-    out.push(Math.round(base + spike))
+  const points = SERIES_SPAN_MS / SAMPLE_TICK_MS
+  const out: LatencyPoint[] = []
+  for (let i = 0; i <= points; i++) {
+    const base = 34 + Math.sin(i / 28) * 7 + rnd() * 9
+    const spike = i % 240 === 164 || i % 240 === 165 ? 60 : i % 240 === 212 ? 30 : 0
+    out.push({ at: now - (points - i) * SAMPLE_TICK_MS, p95: Math.round(base + spike), tickMs: SAMPLE_TICK_MS })
   }
   return out
 }

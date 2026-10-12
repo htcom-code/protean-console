@@ -1,4 +1,6 @@
 import { readStored, writeStored } from '@/hooks/use-persistent-state'
+import { TIME_RANGES } from '@/lib/latency-series'
+import type { TimeRange } from '@/lib/types'
 
 /**
  * User settings, each in its own `pc:` localStorage key.
@@ -36,6 +38,12 @@ export interface Settings {
   pageSize: number
   /** How long a cold start waits for a platform before showing sample data. */
   sampleDelayMs: number
+  /**
+   * How much time the latency chart spans, ending now. A time, not a row count:
+   * the count-based window this replaced covered less time the busier the platform
+   * got. The page holds six hours whatever is chosen, so widening shows more.
+   */
+  chartRange: TimeRange
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -43,6 +51,7 @@ export const DEFAULT_SETTINGS: Settings = {
   evictionFactor: 1,
   pageSize: 200,
   sampleDelayMs: 2500,
+  chartRange: '15m',
 }
 
 const KEYS = {
@@ -50,6 +59,7 @@ const KEYS = {
   evictionFactor: 'pc:evictionFactor',
   pageSize: 'pc:pageSize',
   sampleDelayMs: 'pc:sampleDelayMs',
+  chartRange: 'pc:chartRange',
 } as const
 
 /** Every storage key a setting lives under — what another tab's change is matched against. */
@@ -92,6 +102,8 @@ export function validate(field: keyof Settings, value: unknown): string | null {
       return (EVICTION_FACTORS as readonly number[]).includes(Number(value))
         ? null
         : `must be one of ${EVICTION_FACTORS.join(', ')}`
+    case 'chartRange':
+      return (TIME_RANGES as readonly unknown[]).includes(value) ? null : `must be one of ${TIME_RANGES.join(', ')}`
   }
 }
 
@@ -102,6 +114,7 @@ export function loadSettings(): Settings {
     evictionFactor: readStored<unknown>(KEYS.evictionFactor, DEFAULT_SETTINGS.evictionFactor),
     pageSize: readStored<unknown>(KEYS.pageSize, DEFAULT_SETTINGS.pageSize),
     sampleDelayMs: readStored<unknown>(KEYS.sampleDelayMs, DEFAULT_SETTINGS.sampleDelayMs),
+    chartRange: readStored<unknown>(KEYS.chartRange, DEFAULT_SETTINGS.chartRange),
   }
   return {
     retention: validate('retention', raw.retention) === null ? Number(raw.retention) : DEFAULT_SETTINGS.retention,
@@ -114,6 +127,8 @@ export function loadSettings(): Settings {
       validate('sampleDelayMs', raw.sampleDelayMs) === null
         ? Number(raw.sampleDelayMs)
         : DEFAULT_SETTINGS.sampleDelayMs,
+    chartRange:
+      validate('chartRange', raw.chartRange) === null ? (raw.chartRange as TimeRange) : DEFAULT_SETTINGS.chartRange,
   }
 }
 
@@ -123,6 +138,7 @@ export function saveSettings(next: Settings): void {
   writeStored(KEYS.evictionFactor, next.evictionFactor)
   writeStored(KEYS.pageSize, next.pageSize)
   writeStored(KEYS.sampleDelayMs, next.sampleDelayMs)
+  writeStored(KEYS.chartRange, next.chartRange)
 }
 
 /**

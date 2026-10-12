@@ -81,18 +81,22 @@ function Tile({
 }
 
 /**
- * Header KPIs. The big values are the platform's all-time cumulative aggregates
- * (from `metrics`); the sub-line under each is the recent-window trend from the
- * `summary` SSE event (windowed count / error rate / p95 vs the previous window).
- * When `summary` is absent or a trend field is null, the sub-line renders a muted
- * placeholder rather than a made-up delta.
+ * Header KPIs. Requests and error rate are the platform's all-time cumulative
+ * aggregates (from `metrics`); the sub-line under each is the recent-window trend
+ * from the `summary` SSE event (windowed count / error rate / p95 vs the previous
+ * window). When `summary` is absent or a trend field is null, the sub-line renders
+ * a muted placeholder rather than a made-up delta.
+ *
+ * Latency p95 is the exception: it is `summary`'s windowed p95, the same number the
+ * latency chart plots, so the tile reads as the chart's newest point. It used to be
+ * the worst per-module p95 from `metrics`, which sat beside a chart drawn from a
+ * third source and agreed with neither. Until a `summary` arrives it shows a dash —
+ * the per-module figure is a different measurement, not a stand-in for this one.
  */
 export function KpiRow({ metrics, summary }: { metrics: ModuleMetricsSnapshot[]; summary: TraceSummary | null }) {
   const total = metrics.reduce((a, m) => a + m.count, 0)
   const errors = metrics.reduce((a, m) => a + m.errorCount, 0)
   const errorRate = total ? errors / total : 0
-  const p95 = Math.max(0, ...metrics.map((m) => m.p95LatencyMs))
-  const p99 = Math.max(0, ...metrics.map((m) => m.p99LatencyMs))
   const activeModules = metrics.filter((m) => m.moduleId !== '(platform)').length
 
   const win = summary ? `last ${Math.round(summary.windowMs / 1000)}s` : 'window'
@@ -119,13 +123,17 @@ export function KpiRow({ metrics, summary }: { metrics: ModuleMetricsSnapshot[];
         )}
       </Tile>
 
-      <Tile label="Latency p95" value={String(p95)} unit="ms">
+      <Tile
+        label="Latency p95"
+        value={summary ? String(summary.p95LatencyMs) : '—'}
+        unit={summary ? 'ms' : undefined}
+      >
         {summary?.p95DeltaMs != null ? (
           <Delta dir={dirOf(summary.p95DeltaMs)} tone={badWhenUp(summary.p95DeltaMs)}>
             {Math.abs(summary.p95DeltaMs)}ms · p99 {summary.p99LatencyMs}ms
           </Delta>
         ) : (
-          <Muted>{win} · p99 {summary?.p99LatencyMs ?? p99}ms</Muted>
+          <Muted>{summary ? `${win} · p99 ${summary.p99LatencyMs}ms` : 'no summary yet'}</Muted>
         )}
       </Tile>
 

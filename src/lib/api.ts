@@ -1,3 +1,4 @@
+import type { LatencyPoint } from './latency-series'
 import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, RouteInfo, TraceQuery, TraceSummary } from './types'
 
 const BASE = '/platform'
@@ -21,7 +22,7 @@ export interface LiveData {
   metrics: ModuleMetricsSnapshot[]
   modules: ModuleStatus[] // joined into the module table for isolation mode / trust tier
   summary: TraceSummary | null // windowed KPI header aggregate; null until the `summary` event arrives
-  latencyP95: number[]
+  latency: LatencyPoint[] // the chart's series — see latency-series.ts
 }
 
 /** Why a fetch cycle failed — drives how the UI signals the outage. */
@@ -65,7 +66,9 @@ export async function fetchSnapshot(query: TraceQuery): Promise<FetchResult> {
       getJson<ModuleMetricsSnapshot[]>(`/traces/metrics`, ctrl.signal),
       getJson<ModuleStatus[]>(`/modules`, ctrl.signal),
     ])
-    return { ok: true, data: { traces, metrics, modules, summary: null, latencyP95: deriveP95(traces) } }
+    // No `summary` over REST, so no latency series: the chart plots the platform's
+    // windowed p95, and a trace list is not that.
+    return { ok: true, data: { traces, metrics, modules, summary: null, latency: [] } }
   } catch (e) {
     if (e instanceof HttpError) {
       if (e.status === 401 || e.status === 403) return { ok: false, reason: 'auth', status: e.status }
@@ -100,21 +103,4 @@ export async function getModuleRoutes(id: string): Promise<RoutesResult> {
   } finally {
     clearTimeout(timer)
   }
-}
-
-// Rough p95-per-minute bucketing from raw traces, for the live path.
-export function deriveP95(traces: RequestTrace[]): number[] {
-  const buckets = new Map<number, number[]>()
-  for (const t of traces) {
-    const min = Math.floor(t.epochMillis / 60000)
-    const arr = buckets.get(min) ?? []
-    arr.push(t.latencyMs)
-    buckets.set(min, arr)
-  }
-  return [...buckets.keys()]
-    .sort((a, b) => a - b)
-    .map((k) => {
-      const arr = buckets.get(k)!.sort((a, b) => a - b)
-      return arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.95))]
-    })
 }

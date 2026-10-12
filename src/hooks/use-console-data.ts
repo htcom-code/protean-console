@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { deriveP95, type ConnReason, type LiveData } from '@/lib/api'
+import type { ConnReason, LiveData } from '@/lib/api'
+import { appendPoint, type LatencyPoint } from '@/lib/latency-series'
 import { mockLatencySeries, mockMetrics, mockModules, mockSummary, mockTraces } from '@/lib/mock'
 import { traceKey } from '@/lib/trace-db'
 import type { ModuleMetricsSnapshot, ModuleStatus, RequestTrace, StreamReady, TraceSummary } from '@/lib/types'
@@ -33,8 +34,10 @@ export function platformOrigin(): string {
   const configuredTarget = configured?.trim()
   return (configuredTarget || window.location.origin).replace(/\/$/, '')
 }
-// Rolling window of recent traces kept in memory for the chart / status mix.
-// Full history lives in IndexedDB (useTraceStore); this is just the live view.
+// Rolling window of recent traces kept in memory for the status mix and the trace
+// store's live merge. Full history lives in IndexedDB (useTraceStore). The latency
+// chart no longer reads it: a row count covers less time the busier the platform
+// is, and the chart collapsed to a dot under load.
 const TRACE_WINDOW = 500
 // If the stream never opens (no platform reachable), fall back to sample data.
 // The wait is a user setting; this is the fallback for callers without one.
@@ -168,7 +171,7 @@ function mockData(now: number): LiveData {
     metrics: mockMetrics(now),
     modules: mockModules(),
     summary: mockSummary(),
-    latencyP95: mockLatencySeries(),
+    latency: mockLatencySeries(now),
   }
 }
 
@@ -176,8 +179,8 @@ function mockData(now: number): LiveData {
  * Subscribes to the platform's SSE stream (`/platform/traces/stream`) and
  * assembles the console snapshot from its multiplexed `trace` / `metrics` /
  * `modules` events. Replaces the previous 5s REST polling: new data is pushed,
- * and the trace window accumulates deltas (deduped, capped) for the chart while
- * IndexedDB retains the full history. Mock data is shown only on a cold start
+ * the trace window accumulates deltas (deduped, capped) while IndexedDB retains
+ * the full history, and each `summary` frame adds a point to the latency series. Mock data is shown only on a cold start
  * with no platform reachable.
  */
 export function useConsoleData(settings?: { sampleDelayMs: number }) {
@@ -191,6 +194,10 @@ export function useConsoleData(settings?: { sampleDelayMs: number }) {
   const metricsRef = useRef<ModuleMetricsSnapshot[]>([])
   const modulesRef = useRef<ModuleStatus[]>([])
   const summaryRef = useRef<TraceSummary | null>(null)
+  // The latency chart's series. Page-scoped, not connection-scoped: it survives a
+  // rebuilt stream and a pause, so an outage shows as a gap in one line rather
+  // than as a chart that starts over. A reload clears it.
+  const latencyRef = useRef<LatencyPoint[]>([])
   const everOpenRef = useRef(false)
   const lastUpdatedRef = useRef<number | null>(null)
   // When a frame last arrived at all, readable or not. `lastUpdatedRef` only moves
@@ -221,6 +228,9 @@ export function useConsoleData(settings?: { sampleDelayMs: number }) {
     // platform declares it. Reset per connection, since a rebuilt stream may reach
     // a platform that pushes at a different rate.
     let staleWindowMs = staleTimeoutFor(null)
+    // The push period this connection's `ready` stated, if it did. Stamped on every
+    // latency point so the chart judges a gap against the tick that was promised.
+    let tickMs: number | null = null
 
     function publish() {
       const traces = tracesRef.current
@@ -229,7 +239,7 @@ export function useConsoleData(settings?: { sampleDelayMs: number }) {
         metrics: metricsRef.current,
         modules: modulesRef.current,
         summary: summaryRef.current,
-        latencyP95: deriveP95(traces),
+        latency: latencyRef.current,
       })
     }
 
@@ -410,6 +420,7 @@ export function useConsoleData(settings?: { sampleDelayMs: number }) {
       // on screen that nothing has made this connection — they are live settings,
       // and the platform answering now may not be the one that answered before.
       staleWindowMs = staleTimeoutFor(null)
+      tickMs = null
       setPlatform((p) => (p === null ? p : null))
       try {
         es = new EventSource(STREAM_URL)
@@ -433,6 +444,7 @@ export function useConsoleData(settings?: { sampleDelayMs: number }) {
         if (!info) return
         setPlatform(info)
         staleWindowMs = staleTimeoutFor(info.tickMs)
+        tickMs = info.tickMs != null && info.tickMs > 0 ? info.tickMs : null
         markLive() // re-arms the watchdog on the window the platform just stated
       })
 
@@ -461,6 +473,16 @@ export function useConsoleData(settings?: { sampleDelayMs: number }) {
         const s = readObject<TraceSummary>(e, 'summary')
         if (!s) return
         summaryRef.current = s
+        // Only the frame's shape was checked. A p95 that is not a number would put a
+        // point on the chart this platform never measured, so it adds none — the
+        // KPI tiles already show what the frame said.
+        if (typeof s.p95LatencyMs === 'number' && Number.isFinite(s.p95LatencyMs)) {
+          latencyRef.current = appendPoint(latencyRef.current, {
+            at: Date.now(),
+            p95: s.p95LatencyMs,
+            tickMs: tickMs ?? ASSUMED_TICK_MS,
+          })
+        }
         markLive()
         publish()
       })
