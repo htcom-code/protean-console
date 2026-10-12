@@ -33,8 +33,15 @@ function niceTicks(max: number, count = 4): number[] {
  */
 const EMPTY_SCALE_MAX = 100
 
-/** Single-series p95 latency area with a crosshair+tooltip. One hue (telemetry), no legend needed. */
-export function LatencyChart({ series }: { series: number[] }) {
+/**
+ * Single-series p95 latency area with a crosshair+tooltip. One hue (telemetry), no legend needed.
+ *
+ * `sample` marks a series this console generated because no platform answered. The
+ * top bar already says SAMPLE DATA, but the chart is the one card whose header made
+ * a claim of its own — "rolling window" — and a generated curve is not a window onto
+ * anything. The header names what it is instead.
+ */
+export function LatencyChart({ series, sample = false }: { series: number[]; sample?: boolean }) {
   const gradId = useId()
   const svgRef = useRef<SVGSVGElement>(null)
   const [hover, setHover] = useState<number | null>(null)
@@ -67,7 +74,7 @@ export function LatencyChart({ series }: { series: number[] }) {
       <CardHeader className="flex items-baseline justify-between pb-2">
         <CardTitle className="text-[13.5px] font-semibold">Latency p95 over time</CardTitle>
         <span className="font-mono text-[11px] text-muted-foreground">
-          {empty ? 'ms · default scale' : 'ms · rolling window'}
+          {sample ? 'ms · sample data' : empty ? 'ms · default scale' : 'ms · rolling window'}
         </span>
       </CardHeader>
       <div className="relative px-2.5">
@@ -77,7 +84,7 @@ export function LatencyChart({ series }: { series: number[] }) {
           className="block h-[190px] w-full touch-none"
           preserveAspectRatio="none"
           role="img"
-          aria-label="p95 latency over the rolling window"
+          aria-label={sample ? 'p95 latency, generated sample data' : 'p95 latency over the rolling window'}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
         >
