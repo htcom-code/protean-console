@@ -154,29 +154,61 @@ export async function clearTraces(): Promise<void> {
 }
 
 /**
+ * How far an eviction reached: the last row it deleted, in the order it deleted them.
+ *
+ * Rows are evicted oldest-first along `byEpoch`, and an index orders equal keys by
+ * primary key, so everything at or before this position is gone and everything
+ * after it survived. The trace list uses it to drop exactly what storage dropped —
+ * an epoch alone could not, since rows sharing the boundary millisecond may have
+ * gone either way.
+ */
+export interface EvictionMark {
+  epochMillis: number
+  key: string
+}
+
+/** The row survived an eviction that reached `mark`. */
+export function survives(t: StoredTrace, mark: EvictionMark | null): boolean {
+  if (mark === null) return true
+  // IndexedDB compares string keys by UTF-16 code unit, which is what `>` does too.
+  return t.epochMillis > mark.epochMillis || (t.epochMillis === mark.epochMillis && t._key > mark.key)
+}
+
+/** The later of two marks — what two evictions in a row removed between them. */
+export function laterMark(a: EvictionMark | null, b: EvictionMark | null): EvictionMark | null {
+  if (a === null) return b
+  if (b === null) return a
+  return survives({ epochMillis: b.epochMillis, _key: b.key } as StoredTrace, a) ? b : a
+}
+
+/**
  * Drop the oldest rows once the store is over its limit.
  *
  * `count` is how many to remove; the caller decides that from the limit, the size
  * of the batch that arrived and the user's eviction factor (`evictionCount` in
  * `settings.ts`). Passing it in rather than recomputing here keeps the policy in
  * one place and lets this stay a mechanism.
+ *
+ * Returns how many went and how far the deletion reached (`null` when none did).
  */
-export async function pruneOldest(count: number): Promise<number> {
-  if (count <= 0) return 0
+export async function pruneOldest(count: number): Promise<{ deleted: number; through: EvictionMark | null }> {
+  if (count <= 0) return { deleted: 0, through: null }
   const database = await db()
   const tx = database.transaction(STORE, 'readwrite')
   observeAbort(tx)
   let cursor = await tx.store.index(BY_EPOCH).openCursor(null, 'next') // oldest first
   let deleted = 0
   let toDelete = count
+  let through: EvictionMark | null = null
   while (cursor && toDelete > 0) {
+    through = { epochMillis: cursor.value.epochMillis, key: cursor.primaryKey }
     await cursor.delete()
     deleted += 1
     toDelete -= 1
     cursor = await cursor.continue()
   }
   await tx.done
-  return deleted
+  return { deleted, through }
 }
 
 /** Drop oldest rows beyond `max` (default retention cap). */
