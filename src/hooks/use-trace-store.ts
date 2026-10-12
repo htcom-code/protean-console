@@ -4,9 +4,12 @@ import {
   countTraces,
   findTraces,
   getTracePage,
+  laterMark,
   pruneOldest,
+  survives,
   traceKey,
   upsertTraces,
+  type EvictionMark,
   type StoredTrace,
 } from '@/lib/trace-db'
 import { evictionCount, type Settings } from '@/lib/settings'
@@ -31,6 +34,20 @@ function merge(a: StoredTrace[], b: StoredTrace[]): StoredTrace[] {
   for (const t of a) byKey.set(t._key, t)
   for (const t of b) byKey.set(t._key, t)
   return [...byKey.values()].sort((x, y) => y.epochMillis - x.epochMillis)
+}
+
+/**
+ * The rows the list holds: the newest `keep`, minus anything storage evicted.
+ *
+ * Both cuts exist because the list used to only grow. Every batch merged in and
+ * nothing came out except a clear, so a long session sorted hundreds of thousands
+ * of rows per batch — and eviction removed rows from IndexedDB without removing them
+ * here, so the header could say "15 shown · 8 retained" over rows that no longer
+ * existed anywhere but the screen.
+ */
+function windowed(rows: StoredTrace[], keep: number, evicted: EvictionMark | null): StoredTrace[] {
+  const kept = evicted === null ? rows : rows.filter((r) => survives(r, evicted))
+  return kept.length > keep ? kept.slice(0, keep) : kept
 }
 
 /**
@@ -83,6 +100,16 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
     settingsRef.current = settings
   }, [settings])
   const [rows, setRows] = useState<StoredTrace[]>([])
+  // How many rows the list holds: one page, plus a page for every "load older" the
+  // user asked for. New traffic pushes the oldest out of the bottom rather than
+  // growing the list; they are still in storage, and loading older brings them back.
+  // Mirrored in a ref for the async batch path, which must not be re-created by it.
+  const [keep, setKeepState] = useState(settings.pageSize)
+  const keepRef = useRef(keep)
+  const setKeep = useCallback((next: number) => {
+    keepRef.current = next
+    setKeepState(next)
+  }, [])
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -175,7 +202,8 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
         const page = settingsRef.current.pageSize
         const first = await getTracePage(page)
         if (cancelled) return
-        setRows((prev) => merge(prev, first))
+        setKeep(page)
+        setRows((prev) => windowed(merge(prev, first), page, null))
         setHasMore(first.length === page)
         setTotal(await countTraces())
         okStorage('read')
@@ -189,7 +217,7 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
     return () => {
       cancelled = true
     }
-  }, [persist, failStorage, okStorage])
+  }, [persist, failStorage, okStorage, setKeep])
 
   // Live mode: persist + merge each incoming batch. Persistence is best-effort;
   // the incoming batch is always merged into the view even if IDB write fails.
@@ -203,6 +231,8 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
     const overtaken = () => cancelled || gen !== clearGenRef.current
     const batch = fresh.map(withKey)
     void (async () => {
+      // How far eviction reached during this batch, across the retry too.
+      let evicted: EvictionMark | null = null
       /**
        * Insert, then evict down to the user's limit.
        *
@@ -218,7 +248,8 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
         await upsertTraces(fresh)
         const after = await countTraces()
         const s = settingsRef.current
-        await pruneOldest(evictionCount(after, after - before, s))
+        const pruned = await pruneOldest(evictionCount(after, after - before, s))
+        evicted = laterMark(evicted, pruned.through)
       }
       try {
         try {
@@ -237,7 +268,8 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
           const s = settingsRef.current
           const total = await countTraces()
           const freed = await pruneOldest(Math.max(fresh.length * s.evictionFactor, total - s.retention))
-          if (freed === 0) throw first // nothing to give back; report the original failure
+          evicted = laterMark(evicted, freed.through)
+          if (freed.deleted === 0) throw first // nothing to give back; report the original failure
           await store()
         }
         if (overtaken()) return
@@ -271,7 +303,14 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
           /* leave the count where it was; the write failure is the message that matters */
         }
       }
-      if (!overtaken()) setRows((prev) => merge(prev, batch))
+      if (overtaken()) return
+      const gone = evicted
+      setRows((prev) => windowed(merge(prev, batch), keepRef.current, gone))
+      // A search result is a list of stored rows too, and the same eviction emptied
+      // some of them out of storage.
+      if (gone !== null) {
+        setResult((prev) => (prev ? { ...prev, rows: prev.rows.filter((r) => survives(r, gone)) } : prev))
+      }
     })()
     return () => {
       cancelled = true
@@ -349,7 +388,9 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
         const current = rowsRef.current
         const oldest = current[current.length - 1]
         const page = await getTracePage(size, oldest?.epochMillis)
-        setRows((prev) => merge(prev, page))
+        const next = keepRef.current + size
+        setKeep(next)
+        setRows((prev) => windowed(merge(prev, page), next, null))
         setHasMore(page.length === size)
         okStorage('read')
       } catch (e) {
@@ -361,7 +402,7 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
         setLoadingOlder(false)
       }
     })()
-  }, [failStorage, okStorage])
+  }, [failStorage, okStorage, setKeep])
 
   // Wipe the retained history and the display window, and record how far the wipe
   // reached so a later batch — or a platform replaying its ring buffer on the next
@@ -387,11 +428,12 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
         return
       }
       okStorage('clear')
+      setKeep(settingsRef.current.pageSize)
       setRows([])
       setTotal(0)
       setHasMore(false)
     })()
-  }, [failStorage, okStorage])
+  }, [failStorage, okStorage, setKeep])
 
   // Sample mode has nothing persisted to wipe, so "clear" records which batch
   // was dismissed. Storing the input alongside the decision keeps the view
@@ -424,8 +466,9 @@ export function useTraceStore(liveTraces: RequestTrace[], persist: boolean, sett
   return {
     rows: view,
     total,
-    // Under a filter, "more" means more matches to find, not more rows to page.
-    hasMore: filtering ? moreMatches : hasMore,
+    // Under a filter, "more" means more matches to find, not more rows to page. A full
+    // window may have pushed rows out of the bottom, which storage still holds.
+    hasMore: filtering ? moreMatches : hasMore || rows.length >= keep,
     loadingOlder,
     loadOlder,
     clear,
