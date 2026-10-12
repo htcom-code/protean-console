@@ -166,12 +166,13 @@ function int(v: unknown): number | null {
 }
 
 function mockData(now: number): LiveData {
+  const latency = mockLatencySeries(now)
   return {
     traces: mockTraces(now),
     metrics: mockMetrics(now),
     modules: mockModules(),
-    summary: mockSummary(),
-    latency: mockLatencySeries(now),
+    summary: mockSummary(latency),
+    latency,
   }
 }
 
