@@ -367,6 +367,32 @@ describe('latency chart on sample data', () => {
     }
   })
 
+  it('agrees with the p95 tile, as a live platform would', () => {
+    // On a platform the tile and the chart's newest point are one number. The demo
+    // used to print 88 ms on the tile beside a curve ending in the 40s — sample
+    // data, but a false lesson about what the two panels mean.
+    const restoreEventSource = installFakeEventSource()
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useConsoleData({ sampleDelayMs: 500 }))
+      act(() => {
+        vi.advanceTimersByTime(600) // no platform answered: the demo takes over
+      })
+      expect(result.current.conn.status).toBe('sample')
+      const { latency, summary } = result.current.data!
+      const newest = latency[latency.length - 1]
+      const windowBack = latency.findLast((p) => p.at <= newest.at - summary!.windowMs)!
+      expect(summary!.p95LatencyMs).toBe(newest.p95)
+      expect(summary!.p95DeltaMs).toBe(newest.p95 - windowBack.p95)
+
+      const { getByText } = render(<KpiRow metrics={result.current.data!.metrics} summary={summary} />)
+      expect(getByText(String(newest.p95))).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+      restoreEventSource()
+    }
+  })
+
   it('drops the label once real samples replace it', () => {
     const { queryByText, rerender } = render(<LatencyChart points={mockLatencySeries(T0)} range="15m" sample />)
     rerender(<LatencyChart points={run(T0, 2)} range="15m" now={T0 + 1_000} />)

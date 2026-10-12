@@ -123,19 +123,28 @@ export function mockModules(): ModuleStatus[] {
 
 // Windowed KPI header aggregate, mirroring the platform `summary` SSE event.
 // Trends are populated (not null) so the sample demo shows the fully-wired header.
-export function mockSummary(): TraceSummary {
+//
+// The p95 and its trend are read off the sample latency series rather than made up
+// beside it. On a real platform the p95 tile and the chart's newest point are the
+// same number, and a demo that showed them disagreeing would teach the wrong thing
+// about the screen — sample data is still a claim about how the console behaves.
+export function mockSummary(latency: readonly LatencyPoint[]): TraceSummary {
+  const windowMs = 60000
+  const newest = latency[latency.length - 1]
+  // The point one window back is what the platform compares against.
+  const prev = latency.findLast((p) => p.at <= newest.at - windowMs) ?? latency[0]
   return {
-    windowMs: 60000,
+    windowMs,
     count: 512,
     errorCount: 7,
     errorRate: 0.0137,
     p50LatencyMs: 12,
-    p95LatencyMs: 88,
+    p95LatencyMs: newest.p95,
     p99LatencyMs: 210,
     maxLatencyMs: 640,
     requestsDeltaPct: 0.12,
     errorRateDeltaPp: 0.31,
-    p95DeltaMs: -6,
+    p95DeltaMs: newest.p95 - prev.p95,
     activeModules: 6,
     modulesByMode: { worker: 3, container: 1, 'in-process': 2 },
   }
