@@ -144,7 +144,13 @@ export function KpiRow({
 
   return (
     <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-      <Tile label="Requests · total" value={unknown ? '—' : num(total)}>
+      {/* The reason sits where the unit would, beside the dash: the sub-line keeps
+          saying what it always says, and the tile stays one line tall. */}
+      <Tile
+        label="Requests · total"
+        value={unknown ? '—' : num(total)}
+        unit={unknown ? `\u00a0${unknown}` : undefined}
+      >
         {summary?.requestsDeltaPct != null ? (
           <Delta dir={dirOf(summary.requestsDeltaPct)} tone="neutral">
             {Math.abs(summary.requestsDeltaPct * 100).toFixed(0)}% vs prev
@@ -152,13 +158,12 @@ export function KpiRow({
         ) : (
           <Muted>{win} · no baseline yet</Muted>
         )}
-        {unknown && <Muted> · {unknown}</Muted>}
       </Tile>
 
       <Tile
         label="Error rate"
         value={unknown ? '—' : (errorRate * 100).toFixed(2)}
-        unit={unknown ? undefined : '%'}
+        unit={unknown ? `\u00a0${unknown}` : '%'}
         valueClass={unknown ? undefined : 'text-crit'}
       >
         {summary?.errorRateDeltaPp != null ? (
@@ -167,11 +172,12 @@ export function KpiRow({
           </Delta>
         ) : summary ? (
           <Muted>{win} · {num(summary.errorCount)} err</Muted>
-        ) : unknown ? null : (
+        ) : unknown ? (
           // The error count is the same sum as the rate above: no rows, no count.
+          <Muted>{win} · no summary yet</Muted>
+        ) : (
           <Muted>{win} · {num(errors)} err</Muted>
         )}
-        {unknown && <Muted>{summary ? ' · ' : ''}{unknown}</Muted>}
       </Tile>
 
       <Tile

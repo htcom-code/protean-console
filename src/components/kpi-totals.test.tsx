@@ -68,18 +68,15 @@ describe('on a live connect sequence', () => {
     // 🔴 The protean capture: `metricsEnabled: false`, `metrics: []`, and a summary
     // counting traffic. The tiles used to print a confident zero over it.
     connect(PROTEAN_CONNECT)
-    expect(value('Requests · total')).toBe('—')
-    expect(value('Error rate')).toBe('—')
-    expect(subline('Requests · total')).toContain('metrics off')
-    expect(subline('Error rate')).toContain('metrics off')
+    expect(value('Requests · total')).toMatch(/^—\smetrics\soff$/)
+    expect(value('Error rate')).toMatch(/^—\smetrics\soff$/)
     // The windowed trend is a different measurement, and it is still there.
     expect(subline('Requests · total')).toContain('vs prev')
   })
 
   it('says it was not told, on a platform that sends no ack and no rows', () => {
     connect(SPRING_CONNECT)
-    expect(value('Requests · total')).toBe('—')
-    expect(subline('Requests · total')).toContain('not reported')
+    expect(value('Requests · total')).toMatch(/^—\snot\sreported$/)
   })
 
   it('shows the totals a platform did send', () => {
@@ -87,7 +84,7 @@ describe('on a live connect sequence', () => {
     connect(GO_CONNECT)
     const rows = JSON.parse(parseStream(GO_CONNECT).find((f) => f.event === 'metrics')!.data) as ModuleMetricsSnapshot[]
     expect(value('Requests · total')).toBe(String(rows.reduce((a, r) => a + r.count, 0)))
-    expect(subline('Requests · total')).not.toMatch(/off|not reported/)
+    expect(value('Requests · total')).not.toMatch(/off|not reported/)
   })
 })
 
@@ -98,9 +95,7 @@ describe('the reading, case by case', () => {
     // `metricsEnabled` is the effective value, so recording off reports metrics off
     // too; "metrics off" would point at the wrong switch.
     render(<KpiRow metrics={[]} summary={summary} metricsEnabled={false} tracesEnabled={false} />)
-    expect(value('Requests · total')).toBe('—')
-    expect(subline('Requests · total')).toContain('recording off')
-    expect(subline('Requests · total')).not.toContain('metrics off')
+    expect(value('Requests · total')).toMatch(/^—\srecording\soff$/)
   })
 
   it('keeps a true zero: metrics on and no traffic yet', () => {
@@ -116,8 +111,9 @@ describe('the reading, case by case', () => {
     expect(value('Error rate')).toBe('10.00%')
   })
 
-  it('names the reason alone when there is no summary to trend', () => {
+  it('does not invent an error count when there is no summary either', () => {
     render(<KpiRow metrics={[]} summary={null} metricsEnabled={false} tracesEnabled />)
-    expect(subline('Error rate')).toBe('metrics off')
+    expect(value('Error rate')).toMatch(/^—\smetrics\soff$/)
+    expect(subline('Error rate')).not.toMatch(/\d+ err/)
   })
 })
