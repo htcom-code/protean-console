@@ -89,7 +89,7 @@ export default function App() {
 
           <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.9fr_1fr]">
             <StalePanel reason={staleTraceDerived}>
-              <LatencyChart series={data.latencyP95} />
+              <LatencyChart series={data.latencyP95} sample={conn.status === 'sample'} />
             </StalePanel>
             <StalePanel reason={staleTraceDerived}>
               <StatusMix traces={data.traces} />

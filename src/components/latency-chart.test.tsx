@@ -141,6 +141,36 @@ describe('latency chart with no samples', () => {
   })
 })
 
+describe('latency chart on sample data', () => {
+  afterEach(cleanup)
+
+  /**
+   * With no platform the console draws a generated curve. The top bar says SAMPLE
+   * DATA, but this header said "rolling window" — a claim about where the numbers
+   * came from that a generated curve cannot make. The header has to say it instead.
+   */
+  it('says the curve is sample data, not a window', () => {
+    const { getByText, queryByText, getByRole } = render(<LatencyChart series={[34, 41, 38]} sample />)
+    expect(getByText(/sample data/)).toBeTruthy()
+    expect(queryByText(/rolling window/), 'a generated curve claimed to be a window').toBeNull()
+    expect(getByRole('img').getAttribute('aria-label')).toMatch(/sample data/)
+  })
+
+  it('still draws the curve, so the demo stays explorable', () => {
+    // Every other card shows sample values too; an empty chart beside them would
+    // single this one out without making the screen any more honest.
+    const { container } = render(<LatencyChart series={[34, 41, 38]} sample />)
+    expect(container.querySelector('polyline')).not.toBeNull()
+  })
+
+  it('drops the label once real samples replace it', () => {
+    const { getByText, queryByText, rerender } = render(<LatencyChart series={[34, 41, 38]} sample />)
+    rerender(<LatencyChart series={[12, 40]} />)
+    expect(getByText(/rolling window/)).toBeTruthy()
+    expect(queryByText(/sample data/)).toBeNull()
+  })
+})
+
 describe('status mix', () => {
   afterEach(cleanup)
 
