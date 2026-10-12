@@ -52,6 +52,14 @@ const KEYS = {
   sampleDelayMs: 'pc:sampleDelayMs',
 } as const
 
+/** Every storage key a setting lives under — what another tab's change is matched against. */
+export const SETTINGS_KEYS: readonly string[] = Object.values(KEYS)
+
+/** Two settings say the same thing. */
+export function sameSettings(a: Settings, b: Settings): boolean {
+  return (Object.keys(KEYS) as (keyof Settings)[]).every((k) => a[k] === b[k])
+}
+
 /** An integer within bounds, or `null` when the input cannot be one. */
 function intIn(value: unknown, min: number, max: number): number | null {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN

@@ -198,6 +198,27 @@ describe('the limit the console ships with', () => {
     expect(DEFAULT_SETTINGS.evictionFactor).toBe(1)
   })
 
+  it('applies a limit changed mid-session from the next batch', async () => {
+    // How a save in another tab lands: `useSettings` hands the store new settings
+    // between batches. The store reads them when it evicts, so the next arrival is
+    // pruned to the new limit — not the one it connected with.
+    const hook = renderHook(({ s }) => useConsoleUnderTest(s), { initialProps: { s: withRetention(8) } })
+    await act(async () => {
+      const es = FakeEventSource.current()
+      es.emit('open')
+      replay(es, GO_CONNECT)
+    })
+    await waitFor(async () => expect(await db.countTraces()).toBe(ON_CONNECT))
+    for (let n = 1; n <= 3; n++) await arrive(n)
+    expect(await db.countTraces()).toBe(8)
+
+    hook.rerender({ s: withRetention(6) })
+    await arrive(4)
+
+    expect(await db.countTraces()).toBe(6)
+    await waitFor(() => expect(hook.result.current.store.total).toBe(6))
+  })
+
   it('leaves a store well under the limit untouched', async () => {
     const { result } = await connected(DEFAULT_SETTINGS)
     await arrive(1)
