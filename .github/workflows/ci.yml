@@ -16,6 +16,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job only reads the checkout and runs npm, so the token gets read access to
+# contents and nothing else, whatever the repository default is. Without this the
+# jobs inherit that default, which can include write access.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
