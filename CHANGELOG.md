@@ -86,7 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   readable on hover in both light and dark themes.
 
 ### Notes
-- No tagged release yet (`0.0.1`). This section tracks work toward the first
-  release; move entries under a versioned heading when one is cut.
+- Version tags mark which protean release the console was verified against:
+  `v0.0.1` for protean 0.0.1, `v0.0.2` for protean 0.0.2. Entries are not yet
+  split per tag; this section still collects everything on `main`.
 
 [Unreleased]: https://github.com/htcom-code/protean-console/commits/main
